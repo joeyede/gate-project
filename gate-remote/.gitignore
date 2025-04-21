@@ -1,0 +1,21 @@
+# Binaries
+gate-remote
+gate-remote.exe
+
+# Environment files
+/deploy/gate.env
+
+# Go specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo

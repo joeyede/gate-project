@@ -1,0 +1,16 @@
+[Unit]
+Description=Gate Remote Control Service
+After=network.target
+
+[Service]
+Type=simple
+User=joey
+EnvironmentFile=/etc/gate/gate.env
+ExecStart=/home/joey/gate-remote
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+
