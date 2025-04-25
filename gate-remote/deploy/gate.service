@@ -6,6 +6,9 @@ After=network.target
 Type=simple
 User=joey
 EnvironmentFile=/etc/gate/gate.env
+Environment=MQTT_BROKER_URL=ssl://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8883
+Environment=MQTT_USERNAME=${MQTT_USERNAME}
+Environment=MQTT_PASSWORD=${MQTT_PASSWORD}
 ExecStart=/home/joey/gate-remote
 Restart=always
 RestartSec=5
