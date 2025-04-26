@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -64,13 +64,13 @@ export default function App() {
         Animated.timing(notificationOpacity, {
           toValue: 1,
           duration: 300,
-          useNativeDriver: true
+          useNativeDriver: Platform.OS !== 'web' // Only use native driver on mobile platforms
         }),
         Animated.delay(2000),
         Animated.timing(notificationOpacity, {
           toValue: 0,
           duration: 300,
-          useNativeDriver: true
+          useNativeDriver: Platform.OS !== 'web' // Only use native driver on mobile platforms
         })
       ]).start(() => setNotification(''));
     }
@@ -257,29 +257,37 @@ export default function App() {
 
   if (!fontsLoaded) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" />
-      </View>
+      <Fragment>
+        <View style={styles.container}>
+          <ActivityIndicator size="large" />
+        </View>
+      </Fragment>
     );
   }
 
-  if (!isConnected) {
-    return (
+  const handleTouch = (onPress: () => void) => ({
+    onTouchStart: (e: any) => {
+      // Prevent default touch behavior on web
+      if (Platform.OS === 'web') {
+        e.preventDefault();
+      }
+    },
+    onPress,
+  });
+
+  const handleSubmit = () => {
+    if (!loading && username && password) {
+      connectToMqtt();
+    }
+  };
+
+  const renderLoginScreen = () => (
+    <Fragment>
       <View style={styles.container}>
         <Text style={styles.title}>Gate Control</Text>
-        <Text style={[styles.status, status.includes('Error') && styles.error]}>
-          {status}
-        </Text>
+        <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
         <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
-          <form 
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!loading && username && password) {
-                connectToMqtt();
-              }
-            }}
-            style={{ width: '100%' }}
-          >
+          <View style={{ width: '100%' }}>
             <TextInput
               style={styles.input}
               placeholder="Username"
@@ -287,11 +295,7 @@ export default function App() {
               onChangeText={setUsername}
               autoCapitalize="none"
               autoCorrect={false}
-              onSubmitEditing={() => {
-                if (!loading && username && password) {
-                  connectToMqtt();
-                }
-              }}
+              onSubmitEditing={handleSubmit}
             />
             <View style={styles.passwordContainer}>
               <TextInput
@@ -302,16 +306,14 @@ export default function App() {
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
-                onSubmitEditing={() => {
-                  if (!loading && username && password) {
-                    connectToMqtt();
-                  }
-                }}
+                onSubmitEditing={handleSubmit}
               />
               <TouchableOpacity 
-                style={styles.visibilityToggle}
-                onPress={() => setShowPassword(!showPassword)}
-              >
+                style={[
+                  styles.visibilityToggle,
+                  { pointerEvents: loading ? 'none' : undefined }
+                ]}
+                {...handleTouch(() => setShowPassword(!showPassword))}>
                 <MaterialIcons 
                   name={showPassword ? "visibility-off" : "visibility"} 
                   size={24} 
@@ -327,90 +329,92 @@ export default function App() {
               />
             </View>
             <TouchableOpacity 
-              style={[styles.connectButton, loading && styles.buttonDisabled]} 
-              onPress={() => connectToMqtt()}
+              style={[
+                styles.connectButton,
+                loading && styles.buttonDisabled,
+                { pointerEvents: loading ? 'none' : undefined }
+              ]} 
               disabled={loading || !username || !password}
-            >
+              {...handleTouch(handleSubmit)}>
               <Text style={styles.buttonText}>Connect</Text>
             </TouchableOpacity>
-          </form>
+          </View>
         </View>
-        {loading && <ActivityIndicator style={styles.loader} />}
-        {notification && (
+        {loading ? <ActivityIndicator style={styles.loader} /> : null}
+        {notification ? (
           <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
             <Text style={styles.notificationText}>{notification}</Text>
           </Animated.View>
-        )}
+        ) : null}
       </View>
-    );
-  }
+    </Fragment>
+  );
+
+  const renderMainScreen = () => (
+    <Fragment>
+      <View style={[styles.container, loading && { pointerEvents: 'none' }]}>
+        <Text style={styles.title}>Gate Control</Text>
+        <View style={styles.header}>
+          <View style={styles.statusContainer}>
+            <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4CAF50' : '#f44336' }]} />
+            <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
+          </View>
+          <TouchableOpacity 
+            style={styles.logoutButton}
+            {...handleTouch(handleLogout)}>
+            <MaterialIcons name="logout" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.gridContainer}>
+          <Fragment>
+            <View style={styles.row}>
+              <TouchableOpacity 
+                style={[styles.gridButton, loading && styles.buttonDisabled]} 
+                disabled={loading || !client}
+                {...handleTouch(() => sendCommand('pedestrian'))}>
+                <MaterialIcons name="directions-walk" size={32} color="white" />
+                <Text style={styles.buttonText}>Pedestrian</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.gridButton, loading && styles.buttonDisabled]} 
+                disabled={loading || !client}
+                {...handleTouch(() => sendCommand('full'))}>
+                <MaterialCommunityIcons name="gate-open" size={32} color="white" />
+                <Text style={styles.buttonText}>Full Open</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.row}>
+              <TouchableOpacity 
+                style={[styles.gridButton, loading && styles.buttonDisabled]} 
+                disabled={loading || !client}
+                {...handleTouch(() => sendCommand('left'))}>
+                <MaterialIcons name="arrow-back" size={32} color="white" />
+                <Text style={styles.buttonText}>Left</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.gridButton, loading && styles.buttonDisabled]} 
+                disabled={loading || !client}
+                {...handleTouch(() => sendCommand('right'))}>
+                <MaterialIcons name="arrow-forward" size={32} color="white" />
+                <Text style={styles.buttonText}>Right</Text>
+              </TouchableOpacity>
+            </View>
+          </Fragment>
+        </View>
+        {loading ? <ActivityIndicator style={styles.loader} /> : null}
+        {notification ? (
+          <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
+            <Text style={styles.notificationText}>{notification}</Text>
+          </Animated.View>
+        ) : null}
+      </View>
+    </Fragment>
+  );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Gate Control</Text>
-      <View style={styles.header}>
-        <View style={styles.statusContainer}>
-          <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4CAF50' : '#f44336' }]} />
-          <Text style={[styles.status, status.includes('Error') && styles.error]}>
-            {status}
-          </Text>
-        </View>
-        <TouchableOpacity 
-          style={styles.logoutButton}
-          onPress={handleLogout}
-        >
-          <MaterialIcons name="logout" size={24} color="#007AFF" />
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.gridContainer}>
-        <View style={styles.row}>
-          <TouchableOpacity 
-            style={[styles.gridButton, loading && styles.buttonDisabled]} 
-            onPress={() => sendCommand('pedestrian')}
-            disabled={loading || !client}
-          >
-            <MaterialIcons name="directions-walk" size={32} color="white" />
-            <Text style={styles.buttonText}>Pedestrian</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.gridButton, loading && styles.buttonDisabled]} 
-            onPress={() => sendCommand('full')}
-            disabled={loading || !client}
-          >
-            <MaterialCommunityIcons name="gate-open" size={32} color="white" />
-            <Text style={styles.buttonText}>Full Open</Text>
-          </TouchableOpacity>
-        </View>
-        
-        <View style={styles.row}>
-          <TouchableOpacity 
-            style={[styles.gridButton, loading && styles.buttonDisabled]} 
-            onPress={() => sendCommand('left')}
-            disabled={loading || !client}
-          >
-            <MaterialIcons name="arrow-back" size={32} color="white" />
-            <Text style={styles.buttonText}>Left</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.gridButton, loading && styles.buttonDisabled]} 
-            onPress={() => sendCommand('right')}
-            disabled={loading || !client}
-          >
-            <MaterialIcons name="arrow-forward" size={32} color="white" />
-            <Text style={styles.buttonText}>Right</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-      {loading && <ActivityIndicator style={styles.loader} />}
-      {notification && (
-        <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
-          <Text style={styles.notificationText}>{notification}</Text>
-        </Animated.View>
-      )}
-    </View>
+    <Fragment>
+      {!isConnected ? renderLoginScreen() : renderMainScreen()}
+    </Fragment>
   );
 }
 
@@ -500,10 +504,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
   },
   gridContainer: {
     width: '100%',
@@ -524,10 +525,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
     aspectRatio: 1,
     maxWidth: 250, // Constrain individual button width
   },
