@@ -35,6 +35,9 @@ export default function App() {
   const [notification, setNotification] = useState('');
   const [notificationOpacity] = useState(new Animated.Value(0));
   const [showPassword, setShowPassword] = useState(false);
+  const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
+  const [isGateOnline, setIsGateOnline] = useState(false);
+  const [hasReceivedHeartbeat, setHasReceivedHeartbeat] = useState(false);
 
   // Load saved preferences on startup
   useEffect(() => {
@@ -121,6 +124,24 @@ export default function App() {
     }
   };
 
+  // Add heartbeat check effect
+  useEffect(() => {
+    const checkHeartbeat = () => {
+      if (!hasReceivedHeartbeat) return; // Keep initial state if no heartbeat ever received
+      
+      const now = new Date();
+      const timeSinceLastHeartbeat = lastHeartbeat 
+        ? now.getTime() - lastHeartbeat.getTime()
+        : Infinity;
+      setIsGateOnline(timeSinceLastHeartbeat < 120000); // 2 minutes in milliseconds
+    };
+
+    const timer = setInterval(checkHeartbeat, 10000); // Check every 10 seconds
+    checkHeartbeat(); // Check immediately
+
+    return () => clearInterval(timer);
+  }, [lastHeartbeat, hasReceivedHeartbeat]);
+
   const connectToMqtt = (providedUsername?: string, providedPassword?: string) => {
     // Use the provided values or fall back to state values
     const un = providedUsername || username;
@@ -169,6 +190,17 @@ export default function App() {
 
       client.onMessageArrived = (message: any) => {
         console.log('Message received:', message.payloadString);
+        if (message.destinationName === 'gate/status') {
+          try {
+            const data = JSON.parse(message.payloadString);
+            if (data.hb) {
+              setLastHeartbeat(new Date(data.hb));
+              setHasReceivedHeartbeat(true);
+            }
+          } catch (error) {
+            console.error('Error parsing heartbeat:', error);
+          }
+        }
       };
 
       const connectOptions = {
@@ -179,6 +211,8 @@ export default function App() {
           setLoading(false);
           setClient(client);
           reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+          // Subscribe to heartbeat topic after connection
+          client.subscribe('gate/status', { qos: 1 });
           // Save credentials only after successful connection
           saveCredentials(un, pw);
           showNotification('Connected successfully');
@@ -401,6 +435,21 @@ export default function App() {
             </View>
           </Fragment>
         </View>
+        
+        <View style={styles.heartbeatContainer}>
+          <View style={[styles.connectionDot, { 
+            backgroundColor: hasReceivedHeartbeat 
+              ? (isGateOnline ? '#4CAF50' : '#f44336') 
+              : '#FFC107'
+          }]} />
+          <Text style={styles.heartbeatText}>
+            Gate: {hasReceivedHeartbeat 
+              ? (isGateOnline ? 'Online' : 'Offline') 
+              : 'Waiting for status'}
+            {lastHeartbeat && ` (Last heartbeat: ${lastHeartbeat.toLocaleTimeString()})`}
+          </Text>
+        </View>
+        
         {loading ? <ActivityIndicator style={styles.loader} /> : null}
         {notification ? (
           <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
@@ -573,5 +622,20 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center', // Center the icon
+  },
+  heartbeatContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    padding: 10,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 5,
+    maxWidth: 600,
+    width: '100%',
+  },
+  heartbeatText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#333',
   },
 });

@@ -35,6 +35,10 @@
     "packagerOpts": {
       "hostType": "lan",
       "lanType": "ip"
+    },
+    "updates": {
+      "enabled": true,
+      "fallbackToCacheTimeout": 0
     }
   }
 }

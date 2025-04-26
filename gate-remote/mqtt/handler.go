@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/joeyede/gate-remote/gpio"
@@ -13,6 +14,7 @@ import (
 
 const (
 	TopicGateControl = "gate/control"
+	TopicGateStatus  = "gate/status"
 	QosLevel         = 1
 )
 
@@ -20,9 +22,14 @@ type GateCommand struct {
 	Action string `json:"action"` // full, pedestrian, right, left
 }
 
+type HeartbeatMessage struct {
+	Heartbeat string `json:"hb"`
+}
+
 type Handler struct {
 	client     mqtt.Client
 	controller *gpio.Controller
+	stopHB     chan struct{}
 }
 
 func NewHandler(broker, clientID string, controller *gpio.Controller) (*Handler, error) {
@@ -62,6 +69,7 @@ func NewHandler(broker, clientID string, controller *gpio.Controller) (*Handler,
 	h := &Handler{
 		client:     client,
 		controller: controller,
+		stopHB:     make(chan struct{}),
 	}
 
 	// Subscribe to control topic
@@ -69,7 +77,44 @@ func NewHandler(broker, clientID string, controller *gpio.Controller) (*Handler,
 		return nil, token.Error()
 	}
 
+	// Start heartbeat goroutine
+	go h.startHeartbeat()
+
 	return h, nil
+}
+
+func (h *Handler) startHeartbeat() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	// Send initial heartbeat
+	h.publishHeartbeat()
+
+	for {
+		select {
+		case <-ticker.C:
+			h.publishHeartbeat()
+		case <-h.stopHB:
+			return
+		}
+	}
+}
+
+func (h *Handler) publishHeartbeat() {
+	msg := HeartbeatMessage{
+		Heartbeat: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	payload, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Error marshaling heartbeat: %v", err)
+		return
+	}
+
+	token := h.client.Publish(TopicGateStatus, QosLevel, false, payload)
+	if token.Wait() && token.Error() != nil {
+		log.Printf("Error publishing heartbeat: %v", token.Error())
+	}
 }
 
 func (h *Handler) handleCommand(client mqtt.Client, msg mqtt.Message) {
@@ -101,5 +146,6 @@ func (h *Handler) handleCommand(client mqtt.Client, msg mqtt.Message) {
 }
 
 func (h *Handler) Close() {
+	close(h.stopHB)
 	h.client.Disconnect(250)
 }
