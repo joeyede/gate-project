@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import init from 'react_native_mqtt';
@@ -16,6 +16,12 @@ init({
 // Import Paho from global scope after initialization
 const Paho = global.Paho;
 
+const STORAGE_KEYS = {
+  USERNAME: 'mqtt_username',
+  PASSWORD: 'mqtt_password',
+  REMEMBER_ME: 'remember_me'
+};
+
 export default function App() {
   const [status, setStatus] = useState('Enter credentials');
   const [loading, setLoading] = useState(false);
@@ -23,9 +29,85 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isConnected, setIsConnected] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
+  const [notification, setNotification] = useState('');
+  const [notificationOpacity] = useState(new Animated.Value(0));
 
-  const connectToMqtt = () => {
-    if (!username || !password) {
+  // Load saved preferences on startup
+  useEffect(() => {
+    loadSavedPreferences();
+  }, []);
+
+  // Handle notification animations
+  useEffect(() => {
+    if (notification) {
+      Animated.sequence([
+        Animated.timing(notificationOpacity, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true
+        }),
+        Animated.delay(2000),
+        Animated.timing(notificationOpacity, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true
+        })
+      ]).start(() => setNotification(''));
+    }
+  }, [notification]);
+
+  const showNotification = (message: string) => {
+    setNotification(message);
+  };
+
+  const loadSavedPreferences = async () => {
+    try {
+      const savedRememberMe = await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_ME);
+      setRememberMe(savedRememberMe === 'true');
+
+      if (savedRememberMe === 'true') {
+        const savedUsername = await AsyncStorage.getItem(STORAGE_KEYS.USERNAME);
+        const savedPassword = await AsyncStorage.getItem(STORAGE_KEYS.PASSWORD);
+        
+        if (savedUsername && savedPassword) {
+          setUsername(savedUsername);
+          setPassword(savedPassword);
+          // Auto connect if we have saved credentials
+          connectToMqtt(savedUsername, savedPassword);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load preferences:', error);
+    }
+  };
+
+  const saveCredentials = async (username: string, password: string) => {
+    try {
+      if (rememberMe) {
+        await AsyncStorage.setItem(STORAGE_KEYS.USERNAME, username);
+        await AsyncStorage.setItem(STORAGE_KEYS.PASSWORD, password);
+      }
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, rememberMe.toString());
+    } catch (error) {
+      console.error('Failed to save credentials:', error);
+    }
+  };
+
+  const handleRememberMeToggle = (value: boolean) => {
+    setRememberMe(value);
+    if (!value) {
+      // Clear saved credentials if remember me is turned off
+      AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+    }
+  };
+
+  const connectToMqtt = (providedUsername?: string, providedPassword?: string) => {
+    // Use the provided values or fall back to state values
+    const un = providedUsername || username;
+    const pw = providedPassword || password;
+    
+    if (!un || !pw) {
       setStatus('Please enter both username and password');
       return;
     }
@@ -35,16 +117,34 @@ export default function App() {
       const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
       const client = new Paho.MQTT.Client(
         '3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud',
-        8884,  // WebSocket port
-        '/mqtt', // WebSocket path
+        8884,
+        '/mqtt',
         clientId
       );
+
+      // Add reconnection handling
+      let reconnectAttempts = 0;
+      const maxReconnectAttempts = 5;
+      const reconnectInterval = 3000;
 
       client.onConnectionLost = (responseObject: any) => {
         if (responseObject.errorCode !== 0) {
           console.log('Connection lost:', responseObject.errorMessage);
           setStatus('Disconnected: ' + responseObject.errorMessage);
           setIsConnected(false);
+
+          // Attempt to reconnect
+          if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            setStatus(`Reconnecting (attempt ${reconnectAttempts}/${maxReconnectAttempts})...`);
+            setTimeout(() => {
+              if (!isConnected) {
+                client.connect(connectOptions);
+              }
+            }, reconnectInterval);
+          } else {
+            setStatus('Failed to reconnect after multiple attempts');
+          }
         }
       };
 
@@ -59,15 +159,20 @@ export default function App() {
           setIsConnected(true);
           setLoading(false);
           setClient(client);
+          reconnectAttempts = 0; // Reset reconnect attempts on successful connection
+          // Save credentials only after successful connection
+          saveCredentials(un, pw);
+          showNotification('Connected successfully');
         },
         onFailure: (err: any) => {
           console.error('MQTT Error:', err);
           setStatus('Connection failed: ' + err.errorMessage);
           setLoading(false);
+          showNotification('Connection failed');
         },
         useSSL: true,
-        userName: username,
-        password: password,
+        userName: un,
+        password: pw,
         timeout: 3,
         keepAliveInterval: 30
       };
@@ -81,9 +186,31 @@ export default function App() {
     }
   };
 
+  // Add logout functionality
+  const handleLogout = async () => {
+    if (client) {
+      client.disconnect();
+    }
+    setClient(null);
+    setIsConnected(false);
+    setStatus('Logged out');
+    showNotification('Logged out successfully');
+    
+    if (!rememberMe) {
+      try {
+        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        setUsername('');
+        setPassword('');
+      } catch (error) {
+        console.error('Failed to clear credentials:', error);
+      }
+    }
+  };
+
   const sendCommand = (action: string) => {
     if (!client || !isConnected) {
       setStatus('Not connected');
+      showNotification('Not connected to MQTT');
       return;
     }
 
@@ -94,10 +221,12 @@ export default function App() {
       message.qos = 1;
       client.send(message);
       setStatus(`Sent: ${action}`);
+      showNotification(`Command sent: ${action}`);
       setLoading(false);
     } catch (error) {
       console.error('Send command error:', error);
       setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      showNotification('Failed to send command');
       setLoading(false);
     }
   };
@@ -126,24 +255,48 @@ export default function App() {
             autoCapitalize="none"
             autoCorrect={false}
           />
+          <View style={styles.rememberMeContainer}>
+            <Text>Remember me</Text>
+            <Switch
+              value={rememberMe}
+              onValueChange={handleRememberMeToggle}
+            />
+          </View>
           <TouchableOpacity 
-            style={[styles.gridButton, loading && styles.buttonDisabled]} 
-            onPress={connectToMqtt}
+            style={[styles.connectButton, loading && styles.buttonDisabled]} 
+            onPress={() => connectToMqtt()}
             disabled={loading || !username || !password}
           >
             <Text style={styles.buttonText}>Connect</Text>
           </TouchableOpacity>
         </View>
         {loading && <ActivityIndicator style={styles.loader} />}
+        {notification && (
+          <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
+            <Text style={styles.notificationText}>{notification}</Text>
+          </Animated.View>
+        )}
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.status, status.includes('Error') && styles.error]}>
-        {status}
-      </Text>
+      <View style={styles.header}>
+        <View style={styles.statusContainer}>
+          <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4CAF50' : '#f44336' }]} />
+          <Text style={[styles.status, status.includes('Error') && styles.error]}>
+            {status}
+          </Text>
+        </View>
+        <TouchableOpacity 
+          style={styles.logoutButton}
+          onPress={handleLogout}
+        >
+          <MaterialIcons name="logout" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
+      
       <View style={styles.gridContainer}>
         <View style={styles.row}>
           <TouchableOpacity 
@@ -186,6 +339,11 @@ export default function App() {
         </View>
       </View>
       {loading && <ActivityIndicator style={styles.loader} />}
+      {notification && (
+        <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
+          <Text style={styles.notificationText}>{notification}</Text>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -205,8 +363,81 @@ const styles = StyleSheet.create({
   error: {
     color: 'red',
   },
+  inputContainer: {
+    width: '100%',
+    maxWidth: 400, // Constrain width on larger screens
+    gap: 10,
+    marginBottom: 20,
+  },
+  input: {
+    width: '100%',
+    height: 40,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 5,
+    paddingHorizontal: 10,
+  },
+  loader: {
+    marginTop: 20,
+  },
+  header: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingHorizontal: 20,
+  },
+  logoutButton: {
+    padding: 8,
+  },
+  rememberMeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginVertical: 10,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  connectionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  notification: {
+    position: 'absolute',
+    bottom: 40,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  notificationText: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  connectButton: {
+    width: '100%',
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
   gridContainer: {
     width: '100%',
+    maxWidth: 600, // Constrain width on larger screens
     paddingHorizontal: 20,
     gap: 20,
   },
@@ -227,7 +458,8 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
-    aspectRatio: 1, // Makes buttons square
+    aspectRatio: 1,
+    maxWidth: 250, // Constrain individual button width
   },
   buttonDisabled: {
     backgroundColor: '#A5A5A5',
@@ -239,21 +471,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '600',
     marginTop: 8,
-  },
-  inputContainer: {
-    width: '100%',
-    gap: 10,
-    marginBottom: 20,
-  },
-  input: {
-    width: '100%',
-    height: 40,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 5,
-    paddingHorizontal: 10,
-  },
-  loader: {
-    marginTop: 20,
   },
 });
