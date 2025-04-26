@@ -1,11 +1,24 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
-import mqtt from 'mqtt-browser';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import init from 'react_native_mqtt';
+
+// Initialize MQTT client
+init({
+  size: 10000,
+  storageBackend: AsyncStorage,
+  defaultExpires: 1000 * 3600 * 24,
+  enableCache: true,
+  sync: {}
+});
+
+// Import Paho from global scope after initialization
+const Paho = global.Paho;
 
 export default function App() {
   const [status, setStatus] = useState('Enter credentials');
   const [loading, setLoading] = useState(false);
-  const [client, setClient] = useState<mqtt.MqttClient | null>(null);
+  const [client, setClient] = useState<any>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -18,59 +31,74 @@ export default function App() {
 
     setLoading(true);
     try {
-      const mqttClient = mqtt.connect('wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt', {
-        username,
-        password,
-        clientId: 'gate_app_' + Math.random().toString(16).substr(2, 8),
-        rejectUnauthorized: false,
-      });
+      const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
+      const client = new Paho.MQTT.Client(
+        '3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud',
+        8884,  // WebSocket port
+        '/mqtt', // WebSocket path
+        clientId
+      );
 
-      mqttClient.on('connect', () => {
-        console.log('Connected to MQTT');
-        setStatus('Connected');
-        setIsConnected(true);
-        setLoading(false);
-      });
+      client.onConnectionLost = (responseObject: any) => {
+        if (responseObject.errorCode !== 0) {
+          console.log('Connection lost:', responseObject.errorMessage);
+          setStatus('Disconnected: ' + responseObject.errorMessage);
+          setIsConnected(false);
+        }
+      };
 
-      mqttClient.on('error', (err) => {
-        console.error('MQTT Error:', err);
-        setStatus('Connection error: ' + err.message);
-        setIsConnected(false);
-        setLoading(false);
-      });
+      client.onMessageArrived = (message: any) => {
+        console.log('Message received:', message.payloadString);
+      };
 
-      mqttClient.on('close', () => {
-        console.log('MQTT connection closed');
-        setStatus('Disconnected');
-        setIsConnected(false);
-      });
+      const connectOptions = {
+        onSuccess: () => {
+          console.log('Connected to MQTT');
+          setStatus('Connected');
+          setIsConnected(true);
+          setLoading(false);
+          setClient(client);
+        },
+        onFailure: (err: any) => {
+          console.error('MQTT Error:', err);
+          setStatus('Connection failed: ' + err.errorMessage);
+          setLoading(false);
+        },
+        useSSL: true,
+        userName: username,
+        password: password,
+        timeout: 3,
+        keepAliveInterval: 30
+      };
 
-      setClient(mqttClient);
+      client.connect(connectOptions);
+
     } catch (error) {
-      console.error('MQTT Setup error:', error);
-      setStatus('Setup error: ' + (error instanceof Error ? error.message : String(error)));
+      console.error('Setup error:', error);
+      setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
       setLoading(false);
     }
   };
 
   const sendCommand = (action: string) => {
-    if (!client) {
+    if (!client || !isConnected) {
       setStatus('Not connected');
       return;
     }
 
     setLoading(true);
-    const message = JSON.stringify({ action });
-    
-    client.publish('gate/control', message, (error) => {
-      if (error) {
-        console.error('Publish error:', error);
-        setStatus('Failed to send command: ' + error.message);
-      } else {
-        setStatus(`Sent: ${action}`);
-      }
+    try {
+      const message = new Paho.MQTT.Message(JSON.stringify({ action }));
+      message.destinationName = 'gate/control';
+      message.qos = 1;
+      client.send(message);
+      setStatus(`Sent: ${action}`);
       setLoading(false);
-    });
+    } catch (error) {
+      console.error('Send command error:', error);
+      setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
+      setLoading(false);
+    }
   };
 
   if (!isConnected) {
