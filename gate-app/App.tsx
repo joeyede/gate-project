@@ -166,7 +166,12 @@ export default function App() {
         },
         onFailure: (err: any) => {
           console.error('MQTT Error:', err);
-          setStatus('Connection failed: ' + err.errorMessage);
+          // Convert technical error message to user-friendly message
+          let userFriendlyMessage = 'Connection failed';
+          if (err.errorMessage.includes('not authorized')) {
+            userFriendlyMessage = 'Connection failed: Invalid username or password';
+          }
+          setStatus(userFriendlyMessage);
           setLoading(false);
           showNotification('Connection failed');
         },
@@ -234,6 +239,7 @@ export default function App() {
   if (!isConnected) {
     return (
       <View style={styles.container}>
+        <Text style={styles.title}>Gate Control</Text>
         <Text style={[styles.status, status.includes('Error') && styles.error]}>
           {status}
         </Text>
@@ -282,6 +288,7 @@ export default function App() {
 
   return (
     <View style={styles.container}>
+      <Text style={styles.title}>Gate Control</Text>
       <View style={styles.header}>
         <View style={styles.statusContainer}>
           <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4CAF50' : '#f44336' }]} />
@@ -349,19 +356,19 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    color: '#007AFF',
+    textAlign: 'center',
+  },
   container: {
     flex: 1,
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
-  },
-  status: {
-    marginBottom: 20,
-    fontSize: 16,
-  },
-  error: {
-    color: 'red',
   },
   inputContainer: {
     width: '100%',
@@ -382,14 +389,22 @@ const styles = StyleSheet.create({
   },
   header: {
     width: '100%',
+    maxWidth: 600,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start', // Align to start to position status on the left
     alignItems: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 20,
+    marginBottom: 30,
+    alignSelf: 'center',
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginLeft: 40, // Align with buttons
   },
   logoutButton: {
     padding: 8,
+    marginRight: 40, // Match left margin for symmetry
   },
   rememberMeContainer: {
     flexDirection: 'row',
@@ -397,15 +412,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginVertical: 10,
   },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
   connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     marginRight: 8,
   },
   notification: {
@@ -471,5 +481,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '600',
     marginTop: 8,
+  },
+  status: {
+    fontSize: 16,
+    marginLeft: 0,
+    marginTop: 20, // Add space above status text
+    marginBottom: 20, // Add space below status text
+  },
+  error: {
+    color: 'red',
   },
 });
