@@ -3,6 +3,7 @@ import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity,
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import init from 'react_native_mqtt';
+import * as Font from 'expo-font';
 
 // Initialize MQTT client
 init({
@@ -23,6 +24,7 @@ const STORAGE_KEYS = {
 };
 
 export default function App() {
+  const [fontsLoaded, setFontsLoaded] = useState(false);
   const [status, setStatus] = useState('Enter credentials');
   const [loading, setLoading] = useState(false);
   const [client, setClient] = useState<any>(null);
@@ -32,10 +34,27 @@ export default function App() {
   const [rememberMe, setRememberMe] = useState(false);
   const [notification, setNotification] = useState('');
   const [notificationOpacity] = useState(new Animated.Value(0));
+  const [showPassword, setShowPassword] = useState(false);
 
   // Load saved preferences on startup
   useEffect(() => {
     loadSavedPreferences();
+  }, []);
+
+  // Load fonts
+  useEffect(() => {
+    async function loadFonts() {
+      try {
+        await Font.loadAsync(MaterialIcons.font);
+        await Font.loadAsync(MaterialCommunityIcons.font);
+        setFontsLoaded(true);
+      } catch (error) {
+        console.error('Error loading fonts:', error);
+        // Even if fonts fail to load, we should still show the app
+        setFontsLoaded(true);
+      }
+    }
+    loadFonts();
   }, []);
 
   // Handle notification animations
@@ -236,6 +255,14 @@ export default function App() {
     }
   };
 
+  if (!fontsLoaded) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
   if (!isConnected) {
     return (
       <View style={styles.container}>
@@ -266,20 +293,32 @@ export default function App() {
                 }
               }}
             />
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-              onSubmitEditing={() => {
-                if (!loading && username && password) {
-                  connectToMqtt();
-                }
-              }}
-            />
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={() => {
+                  if (!loading && username && password) {
+                    connectToMqtt();
+                  }
+                }}
+              />
+              <TouchableOpacity 
+                style={styles.visibilityToggle}
+                onPress={() => setShowPassword(!showPassword)}
+              >
+                <MaterialIcons 
+                  name={showPassword ? "visibility-off" : "visibility"} 
+                  size={24} 
+                  color="#666"
+                />
+              </TouchableOpacity>
+            </View>
             <View style={styles.rememberMeContainer}>
               <Text>Remember me</Text>
               <Switch
@@ -511,5 +550,30 @@ const styles = StyleSheet.create({
   },
   error: {
     color: 'red',
+  },
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 5,
+    height: 40,
+    marginBottom: 15,
+    width: '100%',
+    backgroundColor: '#fff',
+    overflow: 'hidden', // This will help contain the input
+  },
+  passwordInput: {
+    flex: 1,
+    height: '100%',
+    paddingHorizontal: 10,
+    borderWidth: 0,
+    backgroundColor: 'transparent', // Make background transparent
+  },
+  visibilityToggle: {
+    padding: 8,
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center', // Center the icon
   },
 });
