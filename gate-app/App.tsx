@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import init from 'react_native_mqtt';
@@ -243,38 +243,58 @@ export default function App() {
         <Text style={[styles.status, status.includes('Error') && styles.error]}>
           {status}
         </Text>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Username"
-            value={username}
-            onChangeText={setUsername}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <View style={styles.rememberMeContainer}>
-            <Text>Remember me</Text>
-            <Switch
-              value={rememberMe}
-              onValueChange={handleRememberMeToggle}
-            />
-          </View>
-          <TouchableOpacity 
-            style={[styles.connectButton, loading && styles.buttonDisabled]} 
-            onPress={() => connectToMqtt()}
-            disabled={loading || !username || !password}
+        <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!loading && username && password) {
+                connectToMqtt();
+              }
+            }}
+            style={{ width: '100%' }}
           >
-            <Text style={styles.buttonText}>Connect</Text>
-          </TouchableOpacity>
+            <TextInput
+              style={styles.input}
+              placeholder="Username"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={() => {
+                if (!loading && username && password) {
+                  connectToMqtt();
+                }
+              }}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={() => {
+                if (!loading && username && password) {
+                  connectToMqtt();
+                }
+              }}
+            />
+            <View style={styles.rememberMeContainer}>
+              <Text>Remember me</Text>
+              <Switch
+                value={rememberMe}
+                onValueChange={handleRememberMeToggle}
+              />
+            </View>
+            <TouchableOpacity 
+              style={[styles.connectButton, loading && styles.buttonDisabled]} 
+              onPress={() => connectToMqtt()}
+              disabled={loading || !username || !password}
+            >
+              <Text style={styles.buttonText}>Connect</Text>
+            </TouchableOpacity>
+          </form>
         </View>
         {loading && <ActivityIndicator style={styles.loader} />}
         {notification && (
@@ -383,6 +403,7 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 5,
     paddingHorizontal: 10,
+    marginBottom: 15, // Add spacing between input fields
   },
   loader: {
     marginTop: 20,
