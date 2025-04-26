@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import init from 'react_native_mqtt';
 
 // Initialize MQTT client
@@ -126,7 +127,7 @@ export default function App() {
             autoCorrect={false}
           />
           <TouchableOpacity 
-            style={[styles.customButton, loading && styles.buttonDisabled]} 
+            style={[styles.gridButton, loading && styles.buttonDisabled]} 
             onPress={connectToMqtt}
             disabled={loading || !username || !password}
           >
@@ -143,38 +144,46 @@ export default function App() {
       <Text style={[styles.status, status.includes('Error') && styles.error]}>
         {status}
       </Text>
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={[styles.customButton, loading && styles.buttonDisabled]} 
-          onPress={() => sendCommand('full')}
-          disabled={loading || !client}
-        >
-          <Text style={styles.buttonText}>Full Open</Text>
-        </TouchableOpacity>
+      <View style={styles.gridContainer}>
+        <View style={styles.row}>
+          <TouchableOpacity 
+            style={[styles.gridButton, loading && styles.buttonDisabled]} 
+            onPress={() => sendCommand('pedestrian')}
+            disabled={loading || !client}
+          >
+            <MaterialIcons name="directions-walk" size={32} color="white" />
+            <Text style={styles.buttonText}>Pedestrian</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.gridButton, loading && styles.buttonDisabled]} 
+            onPress={() => sendCommand('full')}
+            disabled={loading || !client}
+          >
+            <MaterialCommunityIcons name="gate-open" size={32} color="white" />
+            <Text style={styles.buttonText}>Full Open</Text>
+          </TouchableOpacity>
+        </View>
         
-        <TouchableOpacity 
-          style={[styles.customButton, loading && styles.buttonDisabled]} 
-          onPress={() => sendCommand('pedestrian')}
-          disabled={loading || !client}
-        >
-          <Text style={styles.buttonText}>Pedestrian</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.customButton, loading && styles.buttonDisabled]} 
-          onPress={() => sendCommand('right')}
-          disabled={loading || !client}
-        >
-          <Text style={styles.buttonText}>Inner Right</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[styles.customButton, loading && styles.buttonDisabled]} 
-          onPress={() => sendCommand('left')}
-          disabled={loading || !client}
-        >
-          <Text style={styles.buttonText}>Inner Left</Text>
-        </TouchableOpacity>
+        <View style={styles.row}>
+          <TouchableOpacity 
+            style={[styles.gridButton, loading && styles.buttonDisabled]} 
+            onPress={() => sendCommand('left')}
+            disabled={loading || !client}
+          >
+            <MaterialIcons name="arrow-back" size={32} color="white" />
+            <Text style={styles.buttonText}>Left</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.gridButton, loading && styles.buttonDisabled]} 
+            onPress={() => sendCommand('right')}
+            disabled={loading || !client}
+          >
+            <MaterialIcons name="arrow-forward" size={32} color="white" />
+            <Text style={styles.buttonText}>Right</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       {loading && <ActivityIndicator style={styles.loader} />}
     </View>
@@ -196,21 +205,29 @@ const styles = StyleSheet.create({
   error: {
     color: 'red',
   },
-  buttonContainer: {
-    gap: 15,
+  gridContainer: {
     width: '100%',
     paddingHorizontal: 20,
+    gap: 20,
   },
-  customButton: {
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 20,
+  },
+  gridButton: {
+    flex: 1,
     backgroundColor: '#007AFF',
-    paddingVertical: 15,
-    paddingHorizontal: 20,
+    padding: 20,
     borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
     elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
+    aspectRatio: 1, // Makes buttons square
   },
   buttonDisabled: {
     backgroundColor: '#A5A5A5',
@@ -218,9 +235,10 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 18,
+    fontSize: 16,
     textAlign: 'center',
     fontWeight: '600',
+    marginTop: 8,
   },
   inputContainer: {
     width: '100%',
