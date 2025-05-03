@@ -2,20 +2,8 @@ import React, { useState, useEffect, Fragment } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import init from 'react_native_mqtt';
+import * as mqtt from 'mqtt/dist/mqtt.min';
 import * as Font from 'expo-font';
-
-// Initialize MQTT client
-init({
-  size: 10000,
-  storageBackend: AsyncStorage,
-  defaultExpires: 1000 * 3600 * 24,
-  enableCache: true,
-  sync: {}
-});
-
-// Import Paho from global scope after initialization
-const Paho = global.Paho;
 
 const STORAGE_KEYS = {
   USERNAME: 'mqtt_username',
@@ -39,12 +27,10 @@ export default function App() {
   const [isGateOnline, setIsGateOnline] = useState(false);
   const [hasReceivedHeartbeat, setHasReceivedHeartbeat] = useState(false);
 
-  // Load saved preferences on startup
   useEffect(() => {
     loadSavedPreferences();
   }, []);
 
-  // Load fonts
   useEffect(() => {
     async function loadFonts() {
       try {
@@ -53,27 +39,25 @@ export default function App() {
         setFontsLoaded(true);
       } catch (error) {
         console.error('Error loading fonts:', error);
-        // Even if fonts fail to load, we should still show the app
         setFontsLoaded(true);
       }
     }
     loadFonts();
   }, []);
 
-  // Handle notification animations
   useEffect(() => {
     if (notification) {
       Animated.sequence([
         Animated.timing(notificationOpacity, {
           toValue: 1,
           duration: 300,
-          useNativeDriver: Platform.OS !== 'web' // Only use native driver on mobile platforms
+          useNativeDriver: Platform.OS !== 'web'
         }),
         Animated.delay(2000),
         Animated.timing(notificationOpacity, {
           toValue: 0,
           duration: 300,
-          useNativeDriver: Platform.OS !== 'web' // Only use native driver on mobile platforms
+          useNativeDriver: Platform.OS !== 'web'
         })
       ]).start(() => setNotification(''));
     }
@@ -95,7 +79,6 @@ export default function App() {
         if (savedUsername && savedPassword) {
           setUsername(savedUsername);
           setPassword(savedPassword);
-          // Auto connect if we have saved credentials
           connectToMqtt(savedUsername, savedPassword);
         }
       }
@@ -119,31 +102,28 @@ export default function App() {
   const handleRememberMeToggle = (value: boolean) => {
     setRememberMe(value);
     if (!value) {
-      // Clear saved credentials if remember me is turned off
       AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
     }
   };
 
-  // Add heartbeat check effect
   useEffect(() => {
     const checkHeartbeat = () => {
-      if (!hasReceivedHeartbeat) return; // Keep initial state if no heartbeat ever received
+      if (!hasReceivedHeartbeat) return;
       
       const now = new Date();
       const timeSinceLastHeartbeat = lastHeartbeat 
         ? now.getTime() - lastHeartbeat.getTime()
         : Infinity;
-      setIsGateOnline(timeSinceLastHeartbeat < 120000); // 2 minutes in milliseconds
+      setIsGateOnline(timeSinceLastHeartbeat < 120000);
     };
 
-    const timer = setInterval(checkHeartbeat, 10000); // Check every 10 seconds
-    checkHeartbeat(); // Check immediately
+    const timer = setInterval(checkHeartbeat, 10000);
+    checkHeartbeat();
 
     return () => clearInterval(timer);
   }, [lastHeartbeat, hasReceivedHeartbeat]);
 
   const connectToMqtt = (providedUsername?: string, providedPassword?: string) => {
-    // Use the provided values or fall back to state values
     const un = providedUsername || username;
     const pw = providedPassword || password;
     
@@ -155,44 +135,53 @@ export default function App() {
     setLoading(true);
     try {
       const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
-      const client = new Paho.MQTT.Client(
-        '3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud',
-        8884,
-        '/mqtt',
-        clientId
-      );
-
-      // Add reconnection handling
-      let reconnectAttempts = 0;
-      const maxReconnectAttempts = 5;
-      const reconnectInterval = 3000;
-
-      client.onConnectionLost = (responseObject: any) => {
-        if (responseObject.errorCode !== 0) {
-          console.log('Connection lost:', responseObject.errorMessage);
-          setStatus('Disconnected: ' + responseObject.errorMessage);
-          setIsConnected(false);
-
-          // Attempt to reconnect
-          if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++;
-            setStatus(`Reconnecting (attempt ${reconnectAttempts}/${maxReconnectAttempts})...`);
-            setTimeout(() => {
-              if (!isConnected) {
-                client.connect(connectOptions);
-              }
-            }, reconnectInterval);
-          } else {
-            setStatus('Failed to reconnect after multiple attempts');
-          }
+      const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
+      
+      const mqttClient = mqtt.connect(connectUrl, {
+        clientId,
+        username: un,
+        password: pw,
+        clean: true,
+        reconnectPeriod: 3000,
+        keepalive: 30,
+        protocolVersion: 5,
+        properties: {
+          sessionExpiryInterval: 300,
+          receiveMaximum: 100,
+          maximumPacketSize: 1024
         }
-      };
+      });
 
-      client.onMessageArrived = (message: any) => {
-        console.log('Message received:', message.payloadString);
-        if (message.destinationName === 'gate/status') {
+      mqttClient.on('connect', () => {
+        console.log('Connected to MQTT');
+        setStatus('Connected');
+        setIsConnected(true);
+        setLoading(false);
+        setClient(mqttClient);
+        
+        mqttClient.subscribe('gate/status', {
+          qos: 1,
+          properties: {
+            subscriptionIdentifier: 100,
+            userProperties: {
+              app: 'gate-control'
+            }
+          }
+        }, (err) => {
+          if (err) {
+            console.error('Subscribe error:', err);
+          }
+        });
+
+        saveCredentials(un, pw);
+        showNotification('Connected successfully');
+      });
+
+      mqttClient.on('message', (topic, payload, packet) => {
+        console.log('Message received:', payload.toString());
+        if (topic === 'gate/status') {
           try {
-            const data = JSON.parse(message.payloadString);
+            const data = JSON.parse(payload.toString());
             if (data.hb) {
               setLastHeartbeat(new Date(data.hb));
               setHasReceivedHeartbeat(true);
@@ -201,67 +190,29 @@ export default function App() {
             console.error('Error parsing heartbeat:', error);
           }
         }
-      };
+      });
 
-      const connectOptions = {
-        onSuccess: () => {
-          console.log('Connected to MQTT');
-          setStatus('Connected');
-          setIsConnected(true);
-          setLoading(false);
-          setClient(client);
-          reconnectAttempts = 0; // Reset reconnect attempts on successful connection
-          // Subscribe to heartbeat topic after connection
-          client.subscribe('gate/status', { qos: 1 });
-          // Save credentials only after successful connection
-          saveCredentials(un, pw);
-          showNotification('Connected successfully');
-        },
-        onFailure: (err: any) => {
-          console.error('MQTT Error:', err);
-          // Convert technical error message to user-friendly message
-          let userFriendlyMessage = 'Connection failed';
-          if (err.errorMessage.includes('not authorized')) {
-            userFriendlyMessage = 'Connection failed: Invalid username or password';
-          }
-          setStatus(userFriendlyMessage);
-          setLoading(false);
-          showNotification('Connection failed');
-        },
-        useSSL: true,
-        userName: un,
-        password: pw,
-        timeout: 3,
-        keepAliveInterval: 30
-      };
+      mqttClient.on('error', (err) => {
+        console.error('MQTT Error:', err);
+        let userFriendlyMessage = 'Connection failed';
+        if (err.message?.includes('not authorized')) {
+          userFriendlyMessage = 'Connection failed: Invalid username or password';
+        }
+        setStatus(userFriendlyMessage);
+        setLoading(false);
+        showNotification('Connection failed');
+      });
 
-      client.connect(connectOptions);
+      mqttClient.on('close', () => {
+        console.log('Connection closed');
+        setStatus('Disconnected');
+        setIsConnected(false);
+      });
 
     } catch (error) {
       console.error('Setup error:', error);
       setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
       setLoading(false);
-    }
-  };
-
-  // Add logout functionality
-  const handleLogout = async () => {
-    if (client) {
-      client.disconnect();
-    }
-    setClient(null);
-    setIsConnected(false);
-    setStatus('Logged out');
-    showNotification('Logged out successfully');
-    
-    if (!rememberMe) {
-      try {
-        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
-        setUsername('');
-        setPassword('');
-      } catch (error) {
-        console.error('Failed to clear credentials:', error);
-      }
     }
   };
 
@@ -274,18 +225,61 @@ export default function App() {
 
     setLoading(true);
     try {
-      const message = new Paho.MQTT.Message(JSON.stringify({ action }));
-      message.destinationName = 'gate/control';
-      message.qos = 1;
-      client.send(message);
-      setStatus(`Sent: ${action}`);
-      showNotification(`Command sent: ${action}`);
-      setLoading(false);
+      client.publish('gate/control', 
+        JSON.stringify({ action }), 
+        { 
+          qos: 1,
+          properties: {
+            messageExpiryInterval: 60,
+            userProperties: {
+              source: 'gate-app',
+              type: 'command'
+            }
+          }
+        }, 
+        (error) => {
+          if (error) {
+            console.error('Send command error:', error);
+            setStatus(`Error: ${error.message}`);
+            showNotification('Failed to send command');
+          } else {
+            setStatus(`Sent: ${action}`);
+            showNotification(`Command sent: ${action}`);
+          }
+          setLoading(false);
+        }
+      );
     } catch (error) {
       console.error('Send command error:', error);
       setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       showNotification('Failed to send command');
       setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (client) {
+      client.end(false, { 
+        properties: { 
+          sessionExpiryInterval: 0,
+          reasonString: 'User logout'
+        } 
+      }, () => {
+        setClient(null);
+        setIsConnected(false);
+        setStatus('Logged out');
+        showNotification('Logged out successfully');
+        
+        if (!rememberMe) {
+          try {
+            AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+            setUsername('');
+            setPassword('');
+          } catch (error) {
+            console.error('Failed to clear credentials:', error);
+          }
+        }
+      });
     }
   };
 
@@ -301,7 +295,6 @@ export default function App() {
 
   const handleTouch = (onPress: () => void) => ({
     onTouchStart: (e: any) => {
-      // Prevent default touch behavior on web
       if (Platform.OS === 'web') {
         e.preventDefault();
       }
@@ -484,7 +477,7 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     width: '100%',
-    maxWidth: 400, // Constrain width on larger screens
+    maxWidth: 400,
     gap: 10,
     marginBottom: 20,
   },
@@ -495,7 +488,7 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 5,
     paddingHorizontal: 10,
-    marginBottom: 15, // Add spacing between input fields
+    marginBottom: 15,
   },
   loader: {
     marginTop: 20,
@@ -504,7 +497,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 600,
     flexDirection: 'row',
-    justifyContent: 'flex-start', // Align to start to position status on the left
+    justifyContent: 'flex-start',
     alignItems: 'center',
     marginBottom: 30,
     alignSelf: 'center',
@@ -513,11 +506,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginLeft: 40, // Align with buttons
+    marginLeft: 40,
   },
   logoutButton: {
     padding: 8,
-    marginRight: 40, // Match left margin for symmetry
+    marginRight: 40,
   },
   rememberMeContainer: {
     flexDirection: 'row',
@@ -557,7 +550,7 @@ const styles = StyleSheet.create({
   },
   gridContainer: {
     width: '100%',
-    maxWidth: 600, // Constrain width on larger screens
+    maxWidth: 600,
     paddingHorizontal: 20,
     gap: 20,
   },
@@ -576,7 +569,7 @@ const styles = StyleSheet.create({
     elevation: 3,
     boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
     aspectRatio: 1,
-    maxWidth: 250, // Constrain individual button width
+    maxWidth: 250,
   },
   buttonDisabled: {
     backgroundColor: '#A5A5A5',
@@ -592,8 +585,8 @@ const styles = StyleSheet.create({
   status: {
     fontSize: 16,
     marginLeft: 0,
-    marginTop: 20, // Add space above status text
-    marginBottom: 20, // Add space below status text
+    marginTop: 20,
+    marginBottom: 20,
   },
   error: {
     color: 'red',
@@ -608,20 +601,20 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     width: '100%',
     backgroundColor: '#fff',
-    overflow: 'hidden', // This will help contain the input
+    overflow: 'hidden',
   },
   passwordInput: {
     flex: 1,
     height: '100%',
     paddingHorizontal: 10,
     borderWidth: 0,
-    backgroundColor: 'transparent', // Make background transparent
+    backgroundColor: 'transparent',
   },
   visibilityToggle: {
     padding: 8,
     height: '100%',
     justifyContent: 'center',
-    alignItems: 'center', // Center the icon
+    alignItems: 'center',
   },
   heartbeatContainer: {
     flexDirection: 'row',
