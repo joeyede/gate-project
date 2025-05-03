@@ -16,6 +16,7 @@
     "@taoqf/react-native-mqtt": "^3.0.4",
     "async-mqtt": "^2.6.3",
     "expo": "~52.0.46",
+    "expo-dev-client": "~5.0.20",
     "expo-status-bar": "~2.0.1",
     "mqtt": "^5.11.1",
     "mqtt-browser": "^4.3.7",
@@ -30,6 +31,7 @@
     "sp-react-native-mqtt": "^0.5.1"
   },
   "devDependencies": {
+    "@react-native-community/cli": "latest",
     "@babel/core": "^7.25.2",
     "@types/react": "~18.3.12",
     "typescript": "^5.3.3"
