@@ -1,8 +1,8 @@
 import React, { useState, useEffect, Fragment } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as mqtt from 'mqtt/dist/mqtt.min';
+import mqtt, { MqttClient } from 'precompiled-mqtt';
 import * as Font from 'expo-font';
 
 const STORAGE_KEYS = {
@@ -15,7 +15,7 @@ export default function App() {
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [status, setStatus] = useState('Enter credentials');
   const [loading, setLoading] = useState(false);
-  const [client, setClient] = useState<any>(null);
+  const [client, setClient] = useState<MqttClient | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -123,7 +123,7 @@ export default function App() {
     return () => clearInterval(timer);
   }, [lastHeartbeat, hasReceivedHeartbeat]);
 
-  const connectToMqtt = (providedUsername?: string, providedPassword?: string) => {
+  const connectToMqtt = async (providedUsername?: string, providedPassword?: string) => {
     const un = providedUsername || username;
     const pw = providedPassword || password;
     
@@ -145,10 +145,23 @@ export default function App() {
         reconnectPeriod: 3000,
         keepalive: 30,
         protocolVersion: 5,
+        protocol: 'wss',
+        rejectUnauthorized: false,
         properties: {
           sessionExpiryInterval: 300,
           receiveMaximum: 100,
           maximumPacketSize: 1024
+        },
+        will: {
+          topic: 'gate/clients',
+          payload: JSON.stringify({ clientId, status: 'offline' }),
+          qos: 1,
+          retain: false,
+          properties: {
+            willDelayInterval: 0,
+            payloadFormatIndicator: true,
+            messageExpiryInterval: 300
+          }
         }
       });
 
@@ -294,8 +307,9 @@ export default function App() {
   }
 
   const handleTouch = (onPress: () => void) => ({
-    onTouchStart: (e: any) => {
+    onTouchStart: (e: GestureResponderEvent) => {
       if (Platform.OS === 'web') {
+        // @ts-ignore - Web-only property
         e.preventDefault();
       }
     },
@@ -546,7 +560,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
-    boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
   },
   gridContainer: {
     width: '100%',
@@ -567,7 +580,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
-    boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
     aspectRatio: 1,
     maxWidth: 250,
   },

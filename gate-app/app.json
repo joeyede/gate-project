@@ -46,6 +46,10 @@
     "updates": {
       "enabled": true,
       "fallbackToCacheTimeout": 0
+    },
+    "sdkVersion": "53.0.0",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
     }
   }
 }
