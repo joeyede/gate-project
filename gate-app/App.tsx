@@ -18,10 +18,15 @@ const STORAGE_KEYS = {
   REMEMBER_ME: 'remember_me'
 };
 
+// Helper to capitalize first letter
+function capitalizeFirst(str: string) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 export default function App() {
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [status, setStatus] = useState('Enter credentials');
-  const [loading, setLoading] = useState(false);
   const [client, setClient] = useState<MqttClient | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -32,6 +37,7 @@ export default function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [pendingCommands] = useState<Map<string, string>>(new Map());
   const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
+  const [loadingButton, setLoadingButton] = useState<string | null>(null);
 
   useEffect(() => {
     loadSavedPreferences();
@@ -121,7 +127,6 @@ export default function App() {
       return;
     }
 
-    setLoading(true);
     try {
       const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
       const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
@@ -159,7 +164,6 @@ export default function App() {
         setStatus('Connected');
         setIsConnected(true);
         setStatusDotColor('#4CAF50'); // Set dot to green on successful connection
-        setLoading(false);
         setClient(mqttClient);
         
         mqttClient.subscribe('gate/status', {
@@ -222,7 +226,6 @@ export default function App() {
           userFriendlyMessage = 'Connection failed: Invalid username or password';
         }
         setStatus(userFriendlyMessage);
-        setLoading(false);
         showNotification('Connection failed');
       });
 
@@ -235,7 +238,6 @@ export default function App() {
     } catch (error) {
       console.error('Setup error:', error);
       setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
-      setLoading(false);
     }
   };
 
@@ -246,7 +248,7 @@ export default function App() {
       return;
     }
 
-    setLoading(true);
+    setLoadingButton(action);
     setStatusDotColor('#FFC107'); // Yellow during send
     try {
       const correlationId = Math.random().toString(36).substring(2, 15);
@@ -276,7 +278,7 @@ export default function App() {
           } else {
             setStatus(`Sent: ${action}`);
           }
-          setLoading(false);
+          setLoadingButton(null);
         }
       );
     } catch (error) {
@@ -284,7 +286,7 @@ export default function App() {
       setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       showNotification('Failed to send command');
       setStatusDotColor('#f44336'); // Red on failure
-      setLoading(false);
+      setLoadingButton(null);
     }
   };
 
@@ -335,7 +337,7 @@ export default function App() {
   });
 
   const handleSubmit = () => {
-    if (!loading && username && password) {
+    if (username && password) {
       connectToMqtt();
     }
   };
@@ -369,8 +371,7 @@ export default function App() {
             />
             <TouchableOpacity 
               style={[
-                styles.visibilityToggle,
-                { pointerEvents: loading ? 'none' : undefined }
+                styles.visibilityToggle
               ]}
               {...handleTouch(() => setShowPassword(!showPassword))}>
               <MaterialIcons 
@@ -389,28 +390,25 @@ export default function App() {
           </View>
           <TouchableOpacity 
             style={[
-              styles.connectButton,
-              loading && styles.buttonDisabled,
-              { pointerEvents: loading ? 'none' : undefined }
+              styles.connectButton
             ]} 
-            disabled={loading || !username || !password}
+            disabled={!username || !password}
             {...handleTouch(handleSubmit)}>
             <Text style={styles.buttonText}>Connect</Text>
           </TouchableOpacity>
         </View>
       </View>
-      {loading ? <ActivityIndicator style={styles.loader} /> : null}
     </View>
   );
 
   const renderMainScreen = () => (
-    <View style={[styles.container, loading && { pointerEvents: 'none' }]}>
+    <View style={[styles.container]}>
       <Text style={styles.title}>Gate Control</Text>
       <Text style={styles.version}>v{appJson.expo.version}</Text>
       <View style={styles.header}>
         <View style={styles.statusContainer}>
           <View style={[styles.connectionDot, { backgroundColor: statusDotColor }]} />
-          <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
+          <Text style={[styles.status, status.includes('Error') && styles.error]}>{capitalizeFirst(status)}</Text>
         </View>
         <TouchableOpacity 
           style={styles.logoutButton}
@@ -423,15 +421,15 @@ export default function App() {
           <Fragment>
             <View style={styles.row}>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'pedestrian' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('pedestrian'))}>
                 <MaterialIcons name="directions-walk" size={32} color="white" />
                 <Text style={styles.buttonText}>Pedestrian</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'full' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('full'))}>
                 <MaterialCommunityIcons name="gate-open" size={32} color="white" />
                 <Text style={styles.buttonText}>Full Open</Text>
@@ -439,15 +437,15 @@ export default function App() {
             </View>
             <View style={styles.row}>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'left' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('left'))}>
                 <MaterialIcons name="arrow-back" size={32} color="white" />
                 <Text style={styles.buttonText}>Left</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'right' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('right'))}>
                 <MaterialIcons name="arrow-forward" size={32} color="white" />
                 <Text style={styles.buttonText}>Right</Text>
@@ -455,7 +453,7 @@ export default function App() {
             </View>
           </Fragment>
         </View>
-        {loading ? (
+        {loadingButton !== null ? (
           <View style={styles.loaderContainer}>
             <ActivityIndicator />
           </View>
@@ -518,9 +516,6 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     paddingHorizontal: 10,
     marginBottom: 15,
-  },
-  loader: {
-    marginTop: 20,
   },
   header: {
     width: '100%',
