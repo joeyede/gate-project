@@ -87,6 +87,25 @@ func NewHandler(broker, clientID string, controller *gpio.Controller) (*MQTTHand
 						return true, nil
 					}
 
+					// Execute command
+					var err error
+					switch cmd.Action {
+					case "full":
+						err = h.controller.PressFullOpen()
+					case "pedestrian":
+						err = h.controller.PressPedestrian()
+					case "right":
+						err = h.controller.PressInnerRight()
+					case "left":
+						err = h.controller.PressInnerLeft()
+					default:
+						log.Printf("Unknown action: %s", cmd.Action)
+						return true, nil
+					}
+					if err != nil {
+						log.Printf("GPIO action error for %s: %v", cmd.Action, err)
+					}
+
 					// Extract response topic and correlation data
 					responseTopic := pr.Packet.Properties.ResponseTopic
 					correlationData := pr.Packet.Properties.CorrelationData
@@ -96,6 +115,10 @@ func NewHandler(broker, clientID string, controller *gpio.Controller) (*MQTTHand
 						ack := map[string]string{
 							"status": "success",
 							"action": cmd.Action,
+						}
+						if err != nil {
+							ack["status"] = "failed"
+							ack["error"] = err.Error()
 						}
 						ackPayload, err := json.Marshal(ack)
 						if err != nil {
