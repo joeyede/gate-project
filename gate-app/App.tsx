@@ -5,7 +5,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Font from 'expo-font';
 import appJson from './app.json';
 
-// Import MQTT client with safer approach - Buffer is already polyfilled in index.ts
+// Import MQTT client - Buffer is already polyfilled in index.ts
 import mqtt, { MqttClient } from 'precompiled-mqtt';
 
 const STORAGE_KEYS = {

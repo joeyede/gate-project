@@ -2,9 +2,9 @@
 import { Buffer as BufferPolyfill } from 'buffer';
 
 // Safely polyfill Buffer for all environments
-if (typeof global !== 'undefined' && typeof global.Buffer === 'undefined') {
+if (typeof global !== 'undefined') {
   // @ts-ignore
-  global.Buffer = BufferPolyfill;
+  global.Buffer = global.Buffer || BufferPolyfill;
 }
 
 import { registerRootComponent } from 'expo';
