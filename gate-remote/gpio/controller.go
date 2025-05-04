@@ -26,7 +26,7 @@ func NewController() (*Controller, error) {
 
 	c := &Controller{
 		fullPin:       rpi.P1_11, // GPIO17
-		pedestrianPin: rpi.P1_7,  // GPIO4
+		pedestrianPin: rpi.P1_18, // GPIO24
 		rightPin:      rpi.P1_13, // GPIO27
 		leftPin:       rpi.P1_15, // GPIO22
 	}

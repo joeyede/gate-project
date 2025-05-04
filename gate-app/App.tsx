@@ -1,21 +1,12 @@
 import React, { useState, useEffect, Fragment } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import init from 'react_native_mqtt';
 import * as Font from 'expo-font';
+import appJson from './app.json';
 
-// Initialize MQTT client
-init({
-  size: 10000,
-  storageBackend: AsyncStorage,
-  defaultExpires: 1000 * 3600 * 24,
-  enableCache: true,
-  sync: {}
-});
-
-// Import Paho from global scope after initialization
-const Paho = global.Paho;
+// Import MQTT client - Buffer is already polyfilled in index.ts
+import mqtt, { MqttClient } from 'precompiled-mqtt';
 
 const STORAGE_KEYS = {
   USERNAME: 'mqtt_username',
@@ -23,11 +14,16 @@ const STORAGE_KEYS = {
   REMEMBER_ME: 'remember_me'
 };
 
+// Helper to capitalize first letter
+function capitalizeFirst(str: string) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 export default function App() {
   const [fontsLoaded, setFontsLoaded] = useState(false);
   const [status, setStatus] = useState('Enter credentials');
-  const [loading, setLoading] = useState(false);
-  const [client, setClient] = useState<any>(null);
+  const [client, setClient] = useState<MqttClient | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -35,16 +31,14 @@ export default function App() {
   const [notification, setNotification] = useState('');
   const [notificationOpacity] = useState(new Animated.Value(0));
   const [showPassword, setShowPassword] = useState(false);
-  const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
-  const [isGateOnline, setIsGateOnline] = useState(false);
-  const [hasReceivedHeartbeat, setHasReceivedHeartbeat] = useState(false);
+  const [pendingCommands] = useState<Map<string, string>>(new Map());
+  const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
+  const [loadingButton, setLoadingButton] = useState<string | null>(null);
 
-  // Load saved preferences on startup
   useEffect(() => {
     loadSavedPreferences();
   }, []);
 
-  // Load fonts
   useEffect(() => {
     async function loadFonts() {
       try {
@@ -53,27 +47,25 @@ export default function App() {
         setFontsLoaded(true);
       } catch (error) {
         console.error('Error loading fonts:', error);
-        // Even if fonts fail to load, we should still show the app
         setFontsLoaded(true);
       }
     }
     loadFonts();
   }, []);
 
-  // Handle notification animations
   useEffect(() => {
     if (notification) {
       Animated.sequence([
         Animated.timing(notificationOpacity, {
           toValue: 1,
           duration: 300,
-          useNativeDriver: Platform.OS !== 'web' // Only use native driver on mobile platforms
+          useNativeDriver: Platform.OS !== 'web'
         }),
         Animated.delay(2000),
         Animated.timing(notificationOpacity, {
           toValue: 0,
           duration: 300,
-          useNativeDriver: Platform.OS !== 'web' // Only use native driver on mobile platforms
+          useNativeDriver: Platform.OS !== 'web'
         })
       ]).start(() => setNotification(''));
     }
@@ -95,7 +87,6 @@ export default function App() {
         if (savedUsername && savedPassword) {
           setUsername(savedUsername);
           setPassword(savedPassword);
-          // Auto connect if we have saved credentials
           connectToMqtt(savedUsername, savedPassword);
         }
       }
@@ -119,31 +110,11 @@ export default function App() {
   const handleRememberMeToggle = (value: boolean) => {
     setRememberMe(value);
     if (!value) {
-      // Clear saved credentials if remember me is turned off
       AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
     }
   };
 
-  // Add heartbeat check effect
-  useEffect(() => {
-    const checkHeartbeat = () => {
-      if (!hasReceivedHeartbeat) return; // Keep initial state if no heartbeat ever received
-      
-      const now = new Date();
-      const timeSinceLastHeartbeat = lastHeartbeat 
-        ? now.getTime() - lastHeartbeat.getTime()
-        : Infinity;
-      setIsGateOnline(timeSinceLastHeartbeat < 120000); // 2 minutes in milliseconds
-    };
-
-    const timer = setInterval(checkHeartbeat, 10000); // Check every 10 seconds
-    checkHeartbeat(); // Check immediately
-
-    return () => clearInterval(timer);
-  }, [lastHeartbeat, hasReceivedHeartbeat]);
-
-  const connectToMqtt = (providedUsername?: string, providedPassword?: string) => {
-    // Use the provided values or fall back to state values
+  const connectToMqtt = async (providedUsername?: string, providedPassword?: string) => {
     const un = providedUsername || username;
     const pw = providedPassword || password;
     
@@ -152,116 +123,117 @@ export default function App() {
       return;
     }
 
-    setLoading(true);
     try {
       const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
-      const client = new Paho.MQTT.Client(
-        '3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud',
-        8884,
-        '/mqtt',
-        clientId
-      );
-
-      // Add reconnection handling
-      let reconnectAttempts = 0;
-      const maxReconnectAttempts = 5;
-      const reconnectInterval = 3000;
-
-      client.onConnectionLost = (responseObject: any) => {
-        if (responseObject.errorCode !== 0) {
-          console.log('Connection lost:', responseObject.errorMessage);
-          setStatus('Disconnected: ' + responseObject.errorMessage);
-          setIsConnected(false);
-
-          // Attempt to reconnect
-          if (reconnectAttempts < maxReconnectAttempts) {
-            reconnectAttempts++;
-            setStatus(`Reconnecting (attempt ${reconnectAttempts}/${maxReconnectAttempts})...`);
-            setTimeout(() => {
-              if (!isConnected) {
-                client.connect(connectOptions);
-              }
-            }, reconnectInterval);
-          } else {
-            setStatus('Failed to reconnect after multiple attempts');
-          }
-        }
-      };
-
-      client.onMessageArrived = (message: any) => {
-        console.log('Message received:', message.payloadString);
-        if (message.destinationName === 'gate/status') {
-          try {
-            const data = JSON.parse(message.payloadString);
-            if (data.hb) {
-              setLastHeartbeat(new Date(data.hb));
-              setHasReceivedHeartbeat(true);
-            }
-          } catch (error) {
-            console.error('Error parsing heartbeat:', error);
-          }
-        }
-      };
-
-      const connectOptions = {
-        onSuccess: () => {
-          console.log('Connected to MQTT');
-          setStatus('Connected');
-          setIsConnected(true);
-          setLoading(false);
-          setClient(client);
-          reconnectAttempts = 0; // Reset reconnect attempts on successful connection
-          // Subscribe to heartbeat topic after connection
-          client.subscribe('gate/status', { qos: 1 });
-          // Save credentials only after successful connection
-          saveCredentials(un, pw);
-          showNotification('Connected successfully');
-        },
-        onFailure: (err: any) => {
-          console.error('MQTT Error:', err);
-          // Convert technical error message to user-friendly message
-          let userFriendlyMessage = 'Connection failed';
-          if (err.errorMessage.includes('not authorized')) {
-            userFriendlyMessage = 'Connection failed: Invalid username or password';
-          }
-          setStatus(userFriendlyMessage);
-          setLoading(false);
-          showNotification('Connection failed');
-        },
-        useSSL: true,
-        userName: un,
+      const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
+      
+      const mqttClient = mqtt.connect(connectUrl, {
+        clientId,
+        username: un,
         password: pw,
-        timeout: 3,
-        keepAliveInterval: 30
-      };
+        clean: true,
+        reconnectPeriod: 3000,
+        keepalive: 30,
+        protocolVersion: 5,
+        protocol: 'wss',
+        rejectUnauthorized: false,
+        properties: {
+          sessionExpiryInterval: 300,
+          receiveMaximum: 100,
+          maximumPacketSize: 1024
+        },
+        will: {
+          topic: 'gate/clients',
+          payload: JSON.stringify({ clientId, status: 'offline' }),
+          qos: 1,
+          retain: false,
+          properties: {
+            willDelayInterval: 0,
+            payloadFormatIndicator: true,
+            messageExpiryInterval: 300
+          }
+        }
+      });
 
-      client.connect(connectOptions);
+      mqttClient.on('connect', () => {
+        console.log('Connected to MQTT');
+        setStatus('Connected');
+        setIsConnected(true);
+        setStatusDotColor('#4CAF50'); // Set dot to green on successful connection
+        setClient(mqttClient);
+        
+        mqttClient.subscribe('gate/status', {
+          qos: 1,
+          properties: {
+            subscriptionIdentifier: 100,
+            userProperties: {
+              app: 'gate-control'
+            }
+          }
+        }, (err) => {
+          if (err) {
+            console.error('Subscribe error:', err);
+          }
+        });
+
+        mqttClient.subscribe('gate/responses/#', {
+          qos: 1,
+          properties: {
+            subscriptionIdentifier: 101,
+            userProperties: {
+              app: 'gate-control'
+            }
+          }
+        }, (err) => {
+          if (err) {
+            console.error('Subscribe error:', err);
+          }
+        });
+
+        saveCredentials(un, pw);
+        showNotification('Connected successfully');
+      });
+
+      mqttClient.on('message', (topic, payload, packet) => {
+        console.log('Message received:', topic, payload.toString(), packet);
+        if (topic.startsWith('gate/responses/')) {
+            try {
+                const data = JSON.parse(payload.toString());
+                if (packet.properties?.correlationData) {
+                    const correlationId = Buffer.from(packet.properties.correlationData).toString();
+                    const action = pendingCommands.get(correlationId);
+                    if (action) {
+                        pendingCommands.delete(correlationId);
+                        const status = data.status === 'success' ? 'Success' : 'Failed';
+                        setStatus(`${action}: ${status}`);
+                        setStatusDotColor(data.status === 'success' ? '#4CAF50' : '#f44336'); // Green on success, red on failure
+                    }
+                }
+            } catch (error) {
+                console.error('Error parsing response:', error);
+            }
+        }
+      });
+
+      mqttClient.on('error', (err) => {
+        console.error('MQTT Error:', err);
+        let userFriendlyMessage = 'Connection failed';
+        if (err.message?.includes('not authorized')) {
+          userFriendlyMessage = 'Connection failed: Invalid username or password';
+        }
+        setStatus(userFriendlyMessage);
+        showNotification('Connection failed');
+      });
+
+      mqttClient.on('close', () => {
+        console.log('Connection closed');
+        setStatus('Disconnected');
+        setIsConnected(false);
+      });
 
     } catch (error) {
       console.error('Setup error:', error);
       setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
-      setLoading(false);
-    }
-  };
-
-  // Add logout functionality
-  const handleLogout = async () => {
-    if (client) {
-      client.disconnect();
-    }
-    setClient(null);
-    setIsConnected(false);
-    setStatus('Logged out');
-    showNotification('Logged out successfully');
-    
-    if (!rememberMe) {
-      try {
-        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
-        setUsername('');
-        setPassword('');
-      } catch (error) {
-        console.error('Failed to clear credentials:', error);
-      }
     }
   };
 
@@ -272,20 +244,71 @@ export default function App() {
       return;
     }
 
-    setLoading(true);
+    setLoadingButton(action);
+    setStatusDotColor('#FFC107'); // Yellow during send
     try {
-      const message = new Paho.MQTT.Message(JSON.stringify({ action }));
-      message.destinationName = 'gate/control';
-      message.qos = 1;
-      client.send(message);
-      setStatus(`Sent: ${action}`);
-      showNotification(`Command sent: ${action}`);
-      setLoading(false);
+      const correlationId = Math.random().toString(36).substring(2, 15);
+      pendingCommands.set(correlationId, action);
+
+      client.publish('gate/control', 
+        JSON.stringify({ action }), 
+        { 
+          qos: 1,
+          properties: {
+            messageExpiryInterval: 60,
+            responseTopic: `gate/responses/${client.options.clientId}`,
+            correlationData: Buffer.from(correlationId),
+            userProperties: {
+              source: 'gate-app',
+              type: 'command'
+            }
+          }
+        }, 
+        (error) => {
+          if (error) {
+            console.error('Send command error:', error);
+            setStatus(`Error: ${error.message}`);
+            showNotification('Failed to send command');
+            pendingCommands.delete(correlationId);
+            setStatusDotColor('#f44336'); // Red on failure
+          } else {
+            setStatus(`Sent: ${action}`);
+          }
+          setLoadingButton(null);
+        }
+      );
     } catch (error) {
       console.error('Send command error:', error);
       setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       showNotification('Failed to send command');
-      setLoading(false);
+      setStatusDotColor('#f44336'); // Red on failure
+      setLoadingButton(null);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (client) {
+      client.end(false, { 
+        properties: { 
+          sessionExpiryInterval: 0,
+          reasonString: 'User logout'
+        } 
+      }, () => {
+        setClient(null);
+        setIsConnected(false);
+        setStatus('Logged out');
+        showNotification('Logged out successfully');
+        
+        if (!rememberMe) {
+          try {
+            AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+            setUsername('');
+            setPassword('');
+          } catch (error) {
+            console.error('Failed to clear credentials:', error);
+          }
+        }
+      });
     }
   };
 
@@ -300,9 +323,9 @@ export default function App() {
   }
 
   const handleTouch = (onPress: () => void) => ({
-    onTouchStart: (e: any) => {
-      // Prevent default touch behavior on web
+    onTouchStart: (e: GestureResponderEvent) => {
       if (Platform.OS === 'web') {
+        // @ts-ignore - Web-only property
         e.preventDefault();
       }
     },
@@ -310,108 +333,99 @@ export default function App() {
   });
 
   const handleSubmit = () => {
-    if (!loading && username && password) {
+    if (username && password) {
       connectToMqtt();
     }
   };
 
   const renderLoginScreen = () => (
-    <Fragment>
-      <View style={styles.container}>
-        <Text style={styles.title}>Gate Control</Text>
-        <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
-        <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
-          <View style={{ width: '100%' }}>
+    <View style={styles.container}>
+      <Text style={styles.title}>Gate Control</Text>
+      <Text style={styles.version}>v{appJson.expo.version}</Text>
+      <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
+      <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
+        <View style={{ width: '100%' }}>
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={handleSubmit}
+          />
+          <View style={styles.passwordContainer}>
             <TextInput
-              style={styles.input}
-              placeholder="Username"
-              value={username}
-              onChangeText={setUsername}
+              style={styles.passwordInput}
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
               onSubmitEditing={handleSubmit}
             />
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="Password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                onSubmitEditing={handleSubmit}
-              />
-              <TouchableOpacity 
-                style={[
-                  styles.visibilityToggle,
-                  { pointerEvents: loading ? 'none' : undefined }
-                ]}
-                {...handleTouch(() => setShowPassword(!showPassword))}>
-                <MaterialIcons 
-                  name={showPassword ? "visibility-off" : "visibility"} 
-                  size={24} 
-                  color="#666"
-                />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.rememberMeContainer}>
-              <Text>Remember me</Text>
-              <Switch
-                value={rememberMe}
-                onValueChange={handleRememberMeToggle}
-              />
-            </View>
             <TouchableOpacity 
               style={[
-                styles.connectButton,
-                loading && styles.buttonDisabled,
-                { pointerEvents: loading ? 'none' : undefined }
-              ]} 
-              disabled={loading || !username || !password}
-              {...handleTouch(handleSubmit)}>
-              <Text style={styles.buttonText}>Connect</Text>
+                styles.visibilityToggle
+              ]}
+              {...handleTouch(() => setShowPassword(!showPassword))}>
+              <MaterialIcons 
+                name={showPassword ? "visibility-off" : "visibility"} 
+                size={24} 
+                color="#666"
+              />
             </TouchableOpacity>
           </View>
+          <View style={styles.rememberMeContainer}>
+            <Text>Remember me</Text>
+            <Switch
+              value={rememberMe}
+              onValueChange={handleRememberMeToggle}
+            />
+          </View>
+          <TouchableOpacity 
+            style={[
+              styles.connectButton
+            ]} 
+            disabled={!username || !password}
+            {...handleTouch(handleSubmit)}>
+            <Text style={styles.buttonText}>Connect</Text>
+          </TouchableOpacity>
         </View>
-        {loading ? <ActivityIndicator style={styles.loader} /> : null}
-        {notification ? (
-          <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
-            <Text style={styles.notificationText}>{notification}</Text>
-          </Animated.View>
-        ) : null}
       </View>
-    </Fragment>
+    </View>
   );
 
   const renderMainScreen = () => (
-    <Fragment>
-      <View style={[styles.container, loading && { pointerEvents: 'none' }]}>
-        <Text style={styles.title}>Gate Control</Text>
-        <View style={styles.header}>
-          <View style={styles.statusContainer}>
-            <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4CAF50' : '#f44336' }]} />
-            <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
-          </View>
-          <TouchableOpacity 
-            style={styles.logoutButton}
-            {...handleTouch(handleLogout)}>
-            <MaterialIcons name="logout" size={24} color="#007AFF" />
-          </TouchableOpacity>
+    <View style={[styles.container]}>
+      <Text style={styles.title}>Gate Control</Text>
+      <Text style={styles.version}>v{appJson.expo.version}</Text>
+      <View style={styles.header}>
+        <View style={styles.statusContainer}>
+          <View style={[styles.connectionDot, { backgroundColor: statusDotColor }]} />
+          <Text style={[styles.status, status.includes('Error') && styles.error]}>{capitalizeFirst(status)}</Text>
         </View>
+        <TouchableOpacity 
+          style={styles.logoutButton}
+          {...handleTouch(handleLogout)}>
+          <MaterialIcons name="logout" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
+      <View style={styles.stableContainer}>
         <View style={styles.gridContainer}>
           <Fragment>
             <View style={styles.row}>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'pedestrian' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('pedestrian'))}>
                 <MaterialIcons name="directions-walk" size={32} color="white" />
                 <Text style={styles.buttonText}>Pedestrian</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'full' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('full'))}>
                 <MaterialCommunityIcons name="gate-open" size={32} color="white" />
                 <Text style={styles.buttonText}>Full Open</Text>
@@ -419,15 +433,15 @@ export default function App() {
             </View>
             <View style={styles.row}>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'left' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('left'))}>
                 <MaterialIcons name="arrow-back" size={32} color="white" />
                 <Text style={styles.buttonText}>Left</Text>
               </TouchableOpacity>
               <TouchableOpacity 
-                style={[styles.gridButton, loading && styles.buttonDisabled]} 
-                disabled={loading || !client}
+                style={[styles.gridButton, loadingButton === 'right' && styles.buttonDisabled]} 
+                disabled={loadingButton !== null || !client}
                 {...handleTouch(() => sendCommand('right'))}>
                 <MaterialIcons name="arrow-forward" size={32} color="white" />
                 <Text style={styles.buttonText}>Right</Text>
@@ -435,34 +449,30 @@ export default function App() {
             </View>
           </Fragment>
         </View>
-        
-        <View style={styles.heartbeatContainer}>
-          <View style={[styles.connectionDot, { 
-            backgroundColor: hasReceivedHeartbeat 
-              ? (isGateOnline ? '#4CAF50' : '#f44336') 
-              : '#FFC107'
-          }]} />
-          <Text style={styles.heartbeatText}>
-            Gate: {hasReceivedHeartbeat 
-              ? (isGateOnline ? 'Online' : 'Offline') 
-              : 'Waiting for status'}
-            {lastHeartbeat && ` (Last heartbeat: ${lastHeartbeat.toLocaleTimeString()})`}
-          </Text>
-        </View>
-        
-        {loading ? <ActivityIndicator style={styles.loader} /> : null}
-        {notification ? (
-          <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
-            <Text style={styles.notificationText}>{notification}</Text>
-          </Animated.View>
+        {loadingButton !== null ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator />
+          </View>
         ) : null}
       </View>
-    </Fragment>
+    </View>
   );
 
   return (
     <Fragment>
-      {!isConnected ? renderLoginScreen() : renderMainScreen()}
+      <View style={{ flex: 1 }}>
+        {!isConnected ? renderLoginScreen() : renderMainScreen()}
+      </View>
+      
+      {/* Notification overlay completely separate from main UI */}
+      {notification ? (
+        <Animated.View 
+          style={[styles.notificationOverlay, { opacity: notificationOpacity }]}
+          pointerEvents="none"
+        >
+          <Text style={styles.notificationText}>{notification}</Text>
+        </Animated.View>
+      ) : null}
     </Fragment>
   );
 }
@@ -471,9 +481,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 4,
     color: '#007AFF',
     textAlign: 'center',
+  },
+  version: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
   },
   container: {
     flex: 1,
@@ -484,7 +500,7 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     width: '100%',
-    maxWidth: 400, // Constrain width on larger screens
+    maxWidth: 400,
     gap: 10,
     marginBottom: 20,
   },
@@ -495,16 +511,13 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 5,
     paddingHorizontal: 10,
-    marginBottom: 15, // Add spacing between input fields
-  },
-  loader: {
-    marginTop: 20,
+    marginBottom: 15,
   },
   header: {
     width: '100%',
     maxWidth: 600,
     flexDirection: 'row',
-    justifyContent: 'flex-start', // Align to start to position status on the left
+    justifyContent: 'flex-start',
     alignItems: 'center',
     marginBottom: 30,
     alignSelf: 'center',
@@ -513,11 +526,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginLeft: 40, // Align with buttons
+    marginLeft: 40,
+    minHeight: 24,
   },
   logoutButton: {
     padding: 8,
-    marginRight: 40, // Match left margin for symmetry
+    marginRight: 40,
   },
   rememberMeContainer: {
     flexDirection: 'row',
@@ -529,17 +543,16 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    marginRight: 8,
+    marginRight: 0,
   },
-  notification: {
+  notificationOverlay: {
     position: 'absolute',
     bottom: 40,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    padding: 12,
-    borderRadius: 8,
+    left: 0,
+    right: 0,
     alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
   },
   notificationText: {
     color: '#fff',
@@ -553,13 +566,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
-    boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
   },
   gridContainer: {
     width: '100%',
-    maxWidth: 600, // Constrain width on larger screens
+    maxWidth: 600,
     paddingHorizontal: 20,
     gap: 20,
+  },
+  stableContainer: {
+    width: '100%',
+    maxWidth: 600,
+    minHeight: 400,
+    position: 'relative',
+  },
+  loaderContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    zIndex: 5,
   },
   row: {
     flexDirection: 'row',
@@ -574,9 +603,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
-    boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.25)',
     aspectRatio: 1,
-    maxWidth: 250, // Constrain individual button width
+    maxWidth: 250,
   },
   buttonDisabled: {
     backgroundColor: '#A5A5A5',
@@ -591,9 +619,9 @@ const styles = StyleSheet.create({
   },
   status: {
     fontSize: 16,
-    marginLeft: 0,
-    marginTop: 20, // Add space above status text
-    marginBottom: 20, // Add space below status text
+    marginLeft: 8,
+    marginTop: 20,
+    marginBottom: 20,
   },
   error: {
     color: 'red',
@@ -608,34 +636,19 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     width: '100%',
     backgroundColor: '#fff',
-    overflow: 'hidden', // This will help contain the input
+    overflow: 'hidden',
   },
   passwordInput: {
     flex: 1,
     height: '100%',
     paddingHorizontal: 10,
     borderWidth: 0,
-    backgroundColor: 'transparent', // Make background transparent
+    backgroundColor: 'transparent',
   },
   visibilityToggle: {
     padding: 8,
     height: '100%',
     justifyContent: 'center',
-    alignItems: 'center', // Center the icon
-  },
-  heartbeatContainer: {
-    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 20,
-    padding: 10,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 5,
-    maxWidth: 600,
-    width: '100%',
-  },
-  heartbeatText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#333',
   },
 });
