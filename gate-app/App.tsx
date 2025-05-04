@@ -30,9 +30,6 @@ export default function App() {
   const [notification, setNotification] = useState('');
   const [notificationOpacity] = useState(new Animated.Value(0));
   const [showPassword, setShowPassword] = useState(false);
-  const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
-  const [isGateOnline, setIsGateOnline] = useState(false);
-  const [hasReceivedHeartbeat, setHasReceivedHeartbeat] = useState(false);
   const [pendingCommands] = useState<Map<string, string>>(new Map());
   const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
 
@@ -115,23 +112,6 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const checkHeartbeat = () => {
-      if (!hasReceivedHeartbeat) return;
-      
-      const now = new Date();
-      const timeSinceLastHeartbeat = lastHeartbeat 
-        ? now.getTime() - lastHeartbeat.getTime()
-        : Infinity;
-      setIsGateOnline(timeSinceLastHeartbeat < 120000);
-    };
-
-    const timer = setInterval(checkHeartbeat, 10000);
-    checkHeartbeat();
-
-    return () => clearInterval(timer);
-  }, [lastHeartbeat, hasReceivedHeartbeat]);
-
   const connectToMqtt = async (providedUsername?: string, providedPassword?: string) => {
     const un = providedUsername || username;
     const pw = providedPassword || password;
@@ -178,6 +158,7 @@ export default function App() {
         console.log('Connected to MQTT');
         setStatus('Connected');
         setIsConnected(true);
+        setStatusDotColor('#4CAF50'); // Set dot to green on successful connection
         setLoading(false);
         setClient(mqttClient);
         
@@ -215,17 +196,7 @@ export default function App() {
 
       mqttClient.on('message', (topic, payload, packet) => {
         console.log('Message received:', topic, payload.toString(), packet);
-        if (topic === 'gate/status') {
-            try {
-                const data = JSON.parse(payload.toString());
-                if (data.hb) {
-                    setLastHeartbeat(new Date(data.hb));
-                    setHasReceivedHeartbeat(true);
-                }
-            } catch (error) {
-                console.error('Error parsing heartbeat:', error);
-            }
-        } else if (topic.startsWith('gate/responses/')) {
+        if (topic.startsWith('gate/responses/')) {
             try {
                 const data = JSON.parse(payload.toString());
                 if (packet.properties?.correlationData) {
@@ -235,7 +206,6 @@ export default function App() {
                         pendingCommands.delete(correlationId);
                         const status = data.status === 'success' ? 'Success' : 'Failed';
                         setStatus(`${action}: ${status}`);
-                        showNotification(`Command ${action}: ${status}${data.error ? ` - ${data.error}` : ''}`);
                         setStatusDotColor(data.status === 'success' ? '#4CAF50' : '#f44336'); // Green on success, red on failure
                     }
                 }
@@ -305,7 +275,6 @@ export default function App() {
             setStatusDotColor('#f44336'); // Red on failure
           } else {
             setStatus(`Sent: ${action}`);
-            showNotification(`Command sent: ${action}`);
           }
           setLoading(false);
         }
@@ -372,91 +341,84 @@ export default function App() {
   };
 
   const renderLoginScreen = () => (
-    <Fragment>
-      <View style={styles.container}>
-        <Text style={styles.title}>Gate Control</Text>
-        <Text style={styles.version}>v{appJson.expo.version}</Text>
-        <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
-        <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
-          <View style={{ width: '100%' }}>
+    <View style={styles.container}>
+      <Text style={styles.title}>Gate Control</Text>
+      <Text style={styles.version}>v{appJson.expo.version}</Text>
+      <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
+      <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
+        <View style={{ width: '100%' }}>
+          <TextInput
+            style={styles.input}
+            placeholder="Username"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onSubmitEditing={handleSubmit}
+          />
+          <View style={styles.passwordContainer}>
             <TextInput
-              style={styles.input}
-              placeholder="Username"
-              value={username}
-              onChangeText={setUsername}
+              style={styles.passwordInput}
+              placeholder="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
               onSubmitEditing={handleSubmit}
             />
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="Password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                onSubmitEditing={handleSubmit}
-              />
-              <TouchableOpacity 
-                style={[
-                  styles.visibilityToggle,
-                  { pointerEvents: loading ? 'none' : undefined }
-                ]}
-                {...handleTouch(() => setShowPassword(!showPassword))}>
-                <MaterialIcons 
-                  name={showPassword ? "visibility-off" : "visibility"} 
-                  size={24} 
-                  color="#666"
-                />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.rememberMeContainer}>
-              <Text>Remember me</Text>
-              <Switch
-                value={rememberMe}
-                onValueChange={handleRememberMeToggle}
-              />
-            </View>
             <TouchableOpacity 
               style={[
-                styles.connectButton,
-                loading && styles.buttonDisabled,
+                styles.visibilityToggle,
                 { pointerEvents: loading ? 'none' : undefined }
-              ]} 
-              disabled={loading || !username || !password}
-              {...handleTouch(handleSubmit)}>
-              <Text style={styles.buttonText}>Connect</Text>
+              ]}
+              {...handleTouch(() => setShowPassword(!showPassword))}>
+              <MaterialIcons 
+                name={showPassword ? "visibility-off" : "visibility"} 
+                size={24} 
+                color="#666"
+              />
             </TouchableOpacity>
           </View>
+          <View style={styles.rememberMeContainer}>
+            <Text>Remember me</Text>
+            <Switch
+              value={rememberMe}
+              onValueChange={handleRememberMeToggle}
+            />
+          </View>
+          <TouchableOpacity 
+            style={[
+              styles.connectButton,
+              loading && styles.buttonDisabled,
+              { pointerEvents: loading ? 'none' : undefined }
+            ]} 
+            disabled={loading || !username || !password}
+            {...handleTouch(handleSubmit)}>
+            <Text style={styles.buttonText}>Connect</Text>
+          </TouchableOpacity>
         </View>
-        {loading ? <ActivityIndicator style={styles.loader} /> : null}
-        {notification ? (
-          <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
-            <Text style={styles.notificationText}>{notification}</Text>
-          </Animated.View>
-        ) : null}
       </View>
-    </Fragment>
+      {loading ? <ActivityIndicator style={styles.loader} /> : null}
+    </View>
   );
 
   const renderMainScreen = () => (
-    <Fragment>
-      <View style={[styles.container, loading && { pointerEvents: 'none' }]}>
-        <Text style={styles.title}>Gate Control</Text>
-        <Text style={styles.version}>v{appJson.expo.version}</Text>
-        <View style={styles.header}>
-          <View style={styles.statusContainer}>
-            <View style={[styles.connectionDot, { backgroundColor: statusDotColor }]} />
-            <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
-          </View>
-          <TouchableOpacity 
-            style={styles.logoutButton}
-            {...handleTouch(handleLogout)}>
-            <MaterialIcons name="logout" size={24} color="#007AFF" />
-          </TouchableOpacity>
+    <View style={[styles.container, loading && { pointerEvents: 'none' }]}>
+      <Text style={styles.title}>Gate Control</Text>
+      <Text style={styles.version}>v{appJson.expo.version}</Text>
+      <View style={styles.header}>
+        <View style={styles.statusContainer}>
+          <View style={[styles.connectionDot, { backgroundColor: statusDotColor }]} />
+          <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
         </View>
+        <TouchableOpacity 
+          style={styles.logoutButton}
+          {...handleTouch(handleLogout)}>
+          <MaterialIcons name="logout" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
+      <View style={styles.stableContainer}>
         <View style={styles.gridContainer}>
           <Fragment>
             <View style={styles.row}>
@@ -493,34 +455,30 @@ export default function App() {
             </View>
           </Fragment>
         </View>
-        
-        <View style={styles.heartbeatContainer}>
-          <View style={[styles.connectionDot, { 
-            backgroundColor: hasReceivedHeartbeat 
-              ? (isGateOnline ? '#4CAF50' : '#f44336') 
-              : '#FFC107'
-          }]} />
-          <Text style={styles.heartbeatText}>
-            Gate: {hasReceivedHeartbeat 
-              ? (isGateOnline ? 'Online' : 'Offline') 
-              : 'Waiting for status'}
-            {lastHeartbeat && ` (Last heartbeat: ${lastHeartbeat.toLocaleTimeString()})`}
-          </Text>
-        </View>
-        
-        {loading ? <ActivityIndicator style={styles.loader} /> : null}
-        {notification ? (
-          <Animated.View style={[styles.notification, { opacity: notificationOpacity }]}>
-            <Text style={styles.notificationText}>{notification}</Text>
-          </Animated.View>
+        {loading ? (
+          <View style={styles.loaderContainer}>
+            <ActivityIndicator />
+          </View>
         ) : null}
       </View>
-    </Fragment>
+    </View>
   );
 
   return (
     <Fragment>
-      {!isConnected ? renderLoginScreen() : renderMainScreen()}
+      <View style={{ flex: 1 }}>
+        {!isConnected ? renderLoginScreen() : renderMainScreen()}
+      </View>
+      
+      {/* Notification overlay completely separate from main UI */}
+      {notification ? (
+        <Animated.View 
+          style={[styles.notificationOverlay, { opacity: notificationOpacity }]}
+          pointerEvents="none"
+        >
+          <Text style={styles.notificationText}>{notification}</Text>
+        </Animated.View>
+      ) : null}
     </Fragment>
   );
 }
@@ -578,6 +536,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     marginLeft: 40,
+    minHeight: 24,
   },
   logoutButton: {
     padding: 8,
@@ -593,17 +552,16 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    marginRight: 8,
+    marginRight: 0,
   },
-  notification: {
+  notificationOverlay: {
     position: 'absolute',
     bottom: 40,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    padding: 12,
-    borderRadius: 8,
+    left: 0,
+    right: 0,
     alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
   },
   notificationText: {
     color: '#fff',
@@ -623,6 +581,23 @@ const styles = StyleSheet.create({
     maxWidth: 600,
     paddingHorizontal: 20,
     gap: 20,
+  },
+  stableContainer: {
+    width: '100%',
+    maxWidth: 600,
+    minHeight: 400,
+    position: 'relative',
+  },
+  loaderContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+    zIndex: 5,
   },
   row: {
     flexDirection: 'row',
@@ -653,7 +628,7 @@ const styles = StyleSheet.create({
   },
   status: {
     fontSize: 16,
-    marginLeft: 0,
+    marginLeft: 8,
     marginTop: 20,
     marginBottom: 20,
   },
@@ -684,20 +659,5 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  heartbeatContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 20,
-    padding: 10,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 5,
-    maxWidth: 600,
-    width: '100%',
-  },
-  heartbeatText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#333',
   },
 });
