@@ -33,5 +33,8 @@
     "metro-runtime": "^0.82.2",
     "typescript": "^5.1.3"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "jsEngine": "hermes"
+  }
 }

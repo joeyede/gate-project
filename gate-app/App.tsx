@@ -2,15 +2,11 @@ import React, { useState, useEffect, Fragment } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import mqtt, { MqttClient } from 'precompiled-mqtt';
 import * as Font from 'expo-font';
 import appJson from './app.json';
-import { Buffer } from 'buffer';
 
-// Ensure Buffer is globally available
-if (typeof global.Buffer === 'undefined') {
-    global.Buffer = Buffer;
-}
+// Import MQTT client with safer approach - Buffer is already polyfilled in index.ts
+import mqtt, { MqttClient } from 'precompiled-mqtt';
 
 const STORAGE_KEYS = {
   USERNAME: 'mqtt_username',
