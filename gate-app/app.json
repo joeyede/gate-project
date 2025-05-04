@@ -2,7 +2,7 @@
   "expo": {
     "name": "gate-app",
     "slug": "gate-app",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -46,6 +46,10 @@
     "updates": {
       "enabled": true,
       "fallbackToCacheTimeout": 0
+    },
+    "sdkVersion": "53.0.0",
+    "runtimeVersion": {
+      "policy": "sdkVersion"
     }
   }
 }
