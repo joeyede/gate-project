@@ -4,6 +4,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import mqtt, { MqttClient } from 'precompiled-mqtt';
 import * as Font from 'expo-font';
+import appJson from './app.json';
+import { Buffer } from 'buffer';
+
+// Ensure Buffer is globally available
+if (typeof global.Buffer === 'undefined') {
+    global.Buffer = Buffer;
+}
 
 const STORAGE_KEYS = {
   USERNAME: 'mqtt_username',
@@ -26,6 +33,8 @@ export default function App() {
   const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
   const [isGateOnline, setIsGateOnline] = useState(false);
   const [hasReceivedHeartbeat, setHasReceivedHeartbeat] = useState(false);
+  const [pendingCommands] = useState<Map<string, string>>(new Map());
+  const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
 
   useEffect(() => {
     loadSavedPreferences();
@@ -186,22 +195,53 @@ export default function App() {
           }
         });
 
+        mqttClient.subscribe('gate/responses/#', {
+          qos: 1,
+          properties: {
+            subscriptionIdentifier: 101,
+            userProperties: {
+              app: 'gate-control'
+            }
+          }
+        }, (err) => {
+          if (err) {
+            console.error('Subscribe error:', err);
+          }
+        });
+
         saveCredentials(un, pw);
         showNotification('Connected successfully');
       });
 
       mqttClient.on('message', (topic, payload, packet) => {
-        console.log('Message received:', payload.toString());
+        console.log('Message received:', topic, payload.toString(), packet);
         if (topic === 'gate/status') {
-          try {
-            const data = JSON.parse(payload.toString());
-            if (data.hb) {
-              setLastHeartbeat(new Date(data.hb));
-              setHasReceivedHeartbeat(true);
+            try {
+                const data = JSON.parse(payload.toString());
+                if (data.hb) {
+                    setLastHeartbeat(new Date(data.hb));
+                    setHasReceivedHeartbeat(true);
+                }
+            } catch (error) {
+                console.error('Error parsing heartbeat:', error);
             }
-          } catch (error) {
-            console.error('Error parsing heartbeat:', error);
-          }
+        } else if (topic.startsWith('gate/responses/')) {
+            try {
+                const data = JSON.parse(payload.toString());
+                if (packet.properties?.correlationData) {
+                    const correlationId = Buffer.from(packet.properties.correlationData).toString();
+                    const action = pendingCommands.get(correlationId);
+                    if (action) {
+                        pendingCommands.delete(correlationId);
+                        const status = data.status === 'success' ? 'Success' : 'Failed';
+                        setStatus(`${action}: ${status}`);
+                        showNotification(`Command ${action}: ${status}${data.error ? ` - ${data.error}` : ''}`);
+                        setStatusDotColor(data.status === 'success' ? '#4CAF50' : '#f44336'); // Green on success, red on failure
+                    }
+                }
+            } catch (error) {
+                console.error('Error parsing response:', error);
+            }
         }
       });
 
@@ -237,13 +277,19 @@ export default function App() {
     }
 
     setLoading(true);
+    setStatusDotColor('#FFC107'); // Yellow during send
     try {
+      const correlationId = Math.random().toString(36).substring(2, 15);
+      pendingCommands.set(correlationId, action);
+
       client.publish('gate/control', 
         JSON.stringify({ action }), 
         { 
           qos: 1,
           properties: {
             messageExpiryInterval: 60,
+            responseTopic: `gate/responses/${client.options.clientId}`,
+            correlationData: Buffer.from(correlationId),
             userProperties: {
               source: 'gate-app',
               type: 'command'
@@ -255,6 +301,8 @@ export default function App() {
             console.error('Send command error:', error);
             setStatus(`Error: ${error.message}`);
             showNotification('Failed to send command');
+            pendingCommands.delete(correlationId);
+            setStatusDotColor('#f44336'); // Red on failure
           } else {
             setStatus(`Sent: ${action}`);
             showNotification(`Command sent: ${action}`);
@@ -266,6 +314,7 @@ export default function App() {
       console.error('Send command error:', error);
       setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       showNotification('Failed to send command');
+      setStatusDotColor('#f44336'); // Red on failure
       setLoading(false);
     }
   };
@@ -326,6 +375,7 @@ export default function App() {
     <Fragment>
       <View style={styles.container}>
         <Text style={styles.title}>Gate Control</Text>
+        <Text style={styles.version}>v{appJson.expo.version}</Text>
         <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
         <View style={[styles.inputContainer, { flex: Platform.OS === 'web' ? 0 : undefined }]}>
           <View style={{ width: '100%' }}>
@@ -395,9 +445,10 @@ export default function App() {
     <Fragment>
       <View style={[styles.container, loading && { pointerEvents: 'none' }]}>
         <Text style={styles.title}>Gate Control</Text>
+        <Text style={styles.version}>v{appJson.expo.version}</Text>
         <View style={styles.header}>
           <View style={styles.statusContainer}>
-            <View style={[styles.connectionDot, { backgroundColor: isConnected ? '#4CAF50' : '#f44336' }]} />
+            <View style={[styles.connectionDot, { backgroundColor: statusDotColor }]} />
             <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
           </View>
           <TouchableOpacity 
@@ -478,9 +529,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 4,
     color: '#007AFF',
     textAlign: 'center',
+  },
+  version: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
   },
   container: {
     flex: 1,

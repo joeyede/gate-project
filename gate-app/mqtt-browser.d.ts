@@ -32,6 +32,8 @@ declare module 'precompiled-mqtt' {
     retain?: boolean;
     properties?: {
       messageExpiryInterval?: number;
+      responseTopic?: string;
+      correlationData?: Buffer;
       userProperties?: {
         [key: string]: string;
       };
@@ -63,6 +65,7 @@ declare module 'precompiled-mqtt' {
     publish(topic: string, message: string | Buffer, options?: IPublishOptions, callback?: (error?: Error) => void): void;
     subscribe(topic: string, options?: ISubscribeOptions, callback?: (error?: Error) => void): void;
     end(force?: boolean, options?: IEndOptions, callback?: () => void): void;
+    options: IClientOptions;
   }
 
   export function connect(url: string, options?: IClientOptions): MqttClient;
