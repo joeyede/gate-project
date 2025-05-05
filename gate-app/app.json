@@ -15,14 +15,14 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.gateapp.control",
+      "bundleIdentifier": "com.edelfam.control",
       "buildNumber": "1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.gateapp.control",
+      "package": "com.edelfam.control",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -37,16 +37,10 @@
         "projectId": "d487de9b-f372-4ad0-885a-4dc2d6a65c23"
       }
     },
-    "developer": {
-      "tool": "expo-cli"
-    },
-    "packagerOpts": {
-      "hostType": "lan",
-      "lanType": "ip"
-    },
     "updates": {
       "enabled": true,
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/d487de9b-f372-4ad0-885a-4dc2d6a65c23"
     },
     "sdkVersion": "53.0.0",
     "runtimeVersion": {
