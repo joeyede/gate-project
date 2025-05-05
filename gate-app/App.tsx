@@ -67,7 +67,12 @@ export default function App() {
           duration: 300,
           useNativeDriver: Platform.OS !== 'web'
         })
-      ]).start(() => setNotification(''));
+      ]).start(() => {
+        // Use setTimeout to safely schedule the state update
+        setTimeout(() => {
+          setNotification('');
+        }, 0);
+      });
     }
   }, [notification]);
 
