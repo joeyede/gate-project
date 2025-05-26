@@ -1,8 +1,7 @@
 import React, { useState, useEffect, Fragment } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent, Dimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Font from 'expo-font';
 import appJson from './app.json';
 
 // Import MQTT client - Buffer is already polyfilled in index.ts
@@ -21,7 +20,6 @@ function capitalizeFirst(str: string) {
 }
 
 export default function App() {
-  const [fontsLoaded, setFontsLoaded] = useState(false);
   const [status, setStatus] = useState('Enter credentials');
   const [client, setClient] = useState<MqttClient | null>(null);
   const [username, setUsername] = useState('');
@@ -35,22 +33,32 @@ export default function App() {
   const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
   const [loadingButton, setLoadingButton] = useState<string | null>(null);
 
+  // Fix viewport on web, especially for iPhone
   useEffect(() => {
-    loadSavedPreferences();
+    if (Platform.OS === 'web') {
+      const handleResize = () => {
+        // Force a re-render to handle viewport changes
+        const vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+      };
+
+      // Set initial viewport height
+      handleResize();
+      
+      // Listen for resize events (orientation changes, etc.)
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('orientationchange', handleResize);
+      
+      // Cleanup
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        window.removeEventListener('orientationchange', handleResize);
+      };
+    }
   }, []);
 
   useEffect(() => {
-    async function loadFonts() {
-      try {
-        await Font.loadAsync(MaterialIcons.font);
-        await Font.loadAsync(MaterialCommunityIcons.font);
-        setFontsLoaded(true);
-      } catch (error) {
-        console.error('Error loading fonts:', error);
-        setFontsLoaded(true);
-      }
-    }
-    loadFonts();
+    loadSavedPreferences();
   }, []);
 
   useEffect(() => {
@@ -326,16 +334,6 @@ export default function App() {
       });
     }
   };
-
-  if (!fontsLoaded) {
-    return (
-      <Fragment>
-        <View style={styles.container}>
-          <ActivityIndicator size="large" />
-        </View>
-      </Fragment>
-    );
-  }
 
   const handleTouch = (onPress: () => void) => ({
     onTouchStart: (e: GestureResponderEvent) => {
