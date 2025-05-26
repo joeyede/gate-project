@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Fragment } from 'react';
-import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent, Dimensions } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as appJson from './app.json';
@@ -42,6 +42,19 @@ export default function App() {
         // Force a re-render to handle viewport changes
         const vh = window.innerHeight * 0.01;
         document.documentElement.style.setProperty('--vh', `${vh}px`);
+        
+        // Additional iPhone-specific fixes
+        if (/iPhone|iPad|iPod/.test(navigator.userAgent)) {
+          // Prevent zoom on input focus
+          const viewport = document.querySelector('meta[name="viewport"]');
+          if (viewport) {
+            viewport.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+          }
+          
+          // Force body height to match viewport
+          document.body.style.height = `${window.innerHeight}px`;
+          document.documentElement.style.height = `${window.innerHeight}px`;
+        }
       };
 
       // Set initial viewport height
@@ -49,15 +62,40 @@ export default function App() {
       
       // Listen for resize events (orientation changes, etc.)
       window.addEventListener('resize', handleResize);
-      window.addEventListener('orientationchange', handleResize);
+      window.addEventListener('orientationchange', () => {
+        // Delay to allow orientation change to complete
+        setTimeout(handleResize, 100);
+      });
+      
+      // Also handle when screen transitions happen
+      const handleVisibilityChange = () => {
+        if (!document.hidden) {
+          setTimeout(handleResize, 100);
+        }
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
       
       // Cleanup
       return () => {
         window.removeEventListener('resize', handleResize);
         window.removeEventListener('orientationchange', handleResize);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
       };
     }
   }, []);
+
+  // Additional useEffect to handle viewport when connection state changes
+  useEffect(() => {
+    if (Platform.OS === 'web' && /iPhone|iPad|iPod/.test(navigator.userAgent)) {
+      // Recalculate viewport when switching between login and main screen
+      setTimeout(() => {
+        const vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', `${vh}px`);
+        document.body.style.height = `${window.innerHeight}px`;
+        document.documentElement.style.height = `${window.innerHeight}px`;
+      }, 100);
+    }
+  }, [isConnected]);
 
   useEffect(() => {
     loadSavedPreferences();
@@ -269,15 +307,20 @@ export default function App() {
       return;
     }
 
-    // Swap left/right commands based on view
+    // Fix the left/right command mapping based on view perspective
     let actualAction = action;
     if (action === 'left' || action === 'right') {
       if (isInsideView) {
-        actualAction = action; // Inside view: left = left, right = right
+        // From inside view: left = left, right = right (direct mapping)
+        actualAction = action;
       } else {
-        actualAction = action === 'left' ? 'right' : 'left'; // Outside view: swap commands
+        // From outside view: swap commands because you're looking from opposite perspective
+        actualAction = action === 'left' ? 'right' : 'left';
       }
     }
+
+    // Debug logging
+    console.log(`Sending command - Button: ${action}, View: ${isInsideView ? 'Inside' : 'Outside'}, Actual: ${actualAction}`);
 
     setLoadingButton(action);
     setStatusDotColor('#FFC107'); // Yellow during send
@@ -285,8 +328,11 @@ export default function App() {
       const correlationId = Math.random().toString(36).substring(2, 15);
       pendingCommands.set(correlationId, action);
 
+      const payload = JSON.stringify({ action: actualAction });
+      console.log(`Publishing to gate/control: ${payload}`);
+
       client.publish('gate/control', 
-        JSON.stringify({ action: actualAction }), 
+        payload, 
         { 
           qos: 1,
           properties: {
@@ -307,7 +353,8 @@ export default function App() {
             pendingCommands.delete(correlationId);
             setStatusDotColor('#f44336'); // Red on failure
           } else {
-            setStatus(`Sent: ${action}`);
+            setStatus(`Sent: ${action} (${actualAction})`);
+            console.log(`Command sent successfully: ${action} -> ${actualAction}`);
           }
           setLoadingButton(null);
         }
@@ -578,6 +625,10 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     paddingHorizontal: 10,
     marginBottom: 15,
+    ...(Platform.OS === 'web' && {
+      fontSize: 16, // Prevent zoom on iPhone
+      WebkitAppearance: 'none',
+    }),
   },
   header: {
     width: '100%',
@@ -587,6 +638,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 30,
     alignSelf: 'center',
+    flexShrink: 0,
   },
   statusContainer: {
     flexDirection: 'row',
@@ -632,18 +684,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 3,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      userSelect: 'none',
+    }),
   },
   gridContainer: {
     width: '100%',
     maxWidth: 600,
     paddingHorizontal: 20,
     gap: 20,
+    flexShrink: 0,
   },
   stableContainer: {
     width: '100%',
     maxWidth: 600,
     minHeight: 400,
     position: 'relative',
+    flex: 1,
+    flexShrink: 0,
   },
   loaderContainer: {
     position: 'absolute',
@@ -671,6 +730,11 @@ const styles = StyleSheet.create({
     elevation: 3,
     aspectRatio: 1,
     maxWidth: 250,
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      userSelect: 'none',
+      touchAction: 'manipulation',
+    }),
   },
   buttonDisabled: {
     backgroundColor: '#A5A5A5',
@@ -682,6 +746,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '600',
     marginTop: 8,
+    ...(Platform.OS === 'web' && {
+      userSelect: 'none',
+    }),
   },
   status: {
     fontSize: 16,
@@ -710,12 +777,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderWidth: 0,
     backgroundColor: 'transparent',
+    ...(Platform.OS === 'web' && {
+      fontSize: 16, // Prevent zoom on iPhone
+      WebkitAppearance: 'none',
+    }),
   },
   visibilityToggle: {
     padding: 8,
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      cursor: 'pointer',
+      userSelect: 'none',
+    }),
   },
   viewToggleContainer: {
     width: '100%',
@@ -726,6 +801,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 20,
+    flexShrink: 0,
   },
   viewToggleContent: {
     flexDirection: 'row',
@@ -736,6 +812,9 @@ const styles = StyleSheet.create({
   viewToggleLabel: {
     fontSize: 14,
     fontWeight: '500',
+    ...(Platform.OS === 'web' && {
+      userSelect: 'none',
+    }),
   },
   largeSwitch: {
     transform: [{ scale: 1.5 }], // Increase the size of the switch
