@@ -74,5 +74,9 @@ The system uses HMAC-based authentication with timestamped requests to prevent r
 - Build gate-remote for Raspberry Pi: `make build`
 - Client can be built using standard Go tools
 
+## Circuit board
+Designed using https://github.com/bancika/diy-layout-creator
+File remote-board-layout.diy
+
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
