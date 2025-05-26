@@ -3,7 +3,7 @@ This is a project to allow me to control our gate via the Internet as the gate
 controller is a proprietary system that can't be hooked up to the net.  
 
 I am documenting this mainly so I have all the details in case I need to update
-something.  If sombody finds it usfull that would be great.
+something.  If somebody finds it useful that would be great.
 
 
 This project consists of two main components:
