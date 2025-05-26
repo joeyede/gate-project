@@ -107,7 +107,7 @@ The remote used has 4 buttons each had a wire run to one of the pads note the
 image shows only the first wire (red).  And a wire to the ground of the 
 circuit (blue)
 
-## Enclousure 
+## Enclosure 
 The enclosure was designed using [OpenSCAD](https://openscad.org/) 
 
 Schematic: [box-remoteV5-with-lid.scad](box-remoteV5-with-lid.scad)
