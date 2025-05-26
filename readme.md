@@ -111,7 +111,7 @@ circuit (blue)
 The enclosure was designed using [OpenSCAD](https://openscad.org/) 
 
 Schematic: [box-remoteV5-with-lid.scad](box-remoteV5-with-lid.scad)
-Note I never did get the legs for rapberi pi perfect and the slots for usb prots
+Note I never did get the legs for Raspberry Pi perfect and the slots for USB ports
 are slightly out of position.  
 
 
