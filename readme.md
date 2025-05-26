@@ -1,6 +1,6 @@
 # Gate Control Project
 This is a project to allow me to control our gate via the Internet as the gate
-controller is a propritary system that can't be hooked up to the net.  
+controller is a proprietary system that can't be hooked up to the net.  
 
 I am documenting this mainly so I have all the details in case I need to update
 something.  If sombody finds it usfull that would be great.
