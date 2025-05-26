@@ -10,7 +10,7 @@ This project consists of two main components:
 - **gate-remote**: A Raspberry Pi service that controls physical gate 
   operations via GPIO to a real remote that is wired in to the Pi.  It receives
   commands via MQTT and simulates button presses on the remote. 
-- **gate-app**: A react native app to replicate the functions of the remote by 
+- **gate-app**: A React Native app to replicate the functions of the remote by 
   sending commands via MQTT to the gate-remote app.
 
 ## Components
