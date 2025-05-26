@@ -1,6 +1,6 @@
 {
   "name": "gate-app",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -8,7 +8,11 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "tunnel": "expo start --tunnel",
-    "doctor": "npx expo-doctor"
+    "doctor": "npx expo-doctor",
+    "version:patch": "node scripts/bump-version.js patch",
+    "version:minor": "node scripts/bump-version.js minor",
+    "version:major": "node scripts/bump-version.js major",
+    "postinstall": "node scripts/setup-hooks.js"
   },
   "dependencies": {
     "@expo/config-plugins": "~10.0.0",

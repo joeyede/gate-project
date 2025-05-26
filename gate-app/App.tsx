@@ -100,22 +100,32 @@ export default function App() {
     }
   };
 
-  const saveCredentials = async (username: string, password: string) => {
+  const handleRememberMeToggle = async (value: boolean) => {
+    setRememberMe(value);
     try {
-      if (rememberMe) {
-        await AsyncStorage.setItem(STORAGE_KEYS.USERNAME, username);
-        await AsyncStorage.setItem(STORAGE_KEYS.PASSWORD, password);
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
+      if (!value) {
+        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
       }
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, rememberMe.toString());
     } catch (error) {
-      console.error('Failed to save credentials:', error);
+      console.error('Failed to update remember me preference:', error);
     }
   };
 
-  const handleRememberMeToggle = (value: boolean) => {
-    setRememberMe(value);
-    if (!value) {
-      AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+  const saveCredentials = async (username: string, password: string) => {
+    try {
+      // Always save the remember me preference
+      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, rememberMe.toString());
+      
+      if (rememberMe) {
+        await AsyncStorage.setItem(STORAGE_KEYS.USERNAME, username);
+        await AsyncStorage.setItem(STORAGE_KEYS.PASSWORD, password);
+      } else {
+        // Clear credentials if remember me is false
+        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+      }
+    } catch (error) {
+      console.error('Failed to save credentials:', error);
     }
   };
 
@@ -298,7 +308,7 @@ export default function App() {
           sessionExpiryInterval: 0,
           reasonString: 'User logout'
         } 
-      }, () => {
+      }, async () => {
         setClient(null);
         setIsConnected(false);
         setStatus('Logged out');
@@ -306,7 +316,7 @@ export default function App() {
         
         if (!rememberMe) {
           try {
-            AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+            await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
             setUsername('');
             setPassword('');
           } catch (error) {
