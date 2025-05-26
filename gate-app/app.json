@@ -2,7 +2,7 @@
   "expo": {
     "name": "gate-app",
     "slug": "gate-app",
-    "version": "1.0.4",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,21 +16,29 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.edelfam.control",
-      "buildNumber": "10004",
+      "buildNumber": "10008",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.edelfam.control",
-      "versionCode": 10004,
+      "versionCode": 10008,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "meta": {
+        "viewport": "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover",
+        "apple-mobile-web-app-capable": "yes",
+        "apple-mobile-web-app-status-bar-style": "default",
+        "apple-mobile-web-app-title": "Gate Control",
+        "mobile-web-app-capable": "yes"
+      },
+      "bundler": "metro"
     },
     "extra": {
       "eas": {

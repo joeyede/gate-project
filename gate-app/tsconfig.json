@@ -3,7 +3,12 @@
   "compilerOptions": {
     "strict": true,
     "typeRoots": ["./node_modules/@types"],
-    "noImplicitAny": false
+    "noImplicitAny": false,
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "bundler"
   },
   "exclude": [
     "node_modules",
