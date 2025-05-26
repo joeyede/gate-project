@@ -101,6 +101,7 @@ Designed using https://github.com/bancika/diy-layout-creator
 File [remote-board-layout.diy](remote-board-layout.diy)
 
 This uses transistors to trigger actual remote buttons 
+
 ![Remote example](remote.png "Remote")
 
 The remote used has 4 buttons each had a wire run to one of the pads note the
