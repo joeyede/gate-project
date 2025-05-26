@@ -2,10 +2,11 @@ import React, { useState, useEffect, Fragment } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent, Dimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import appJson from './app.json';
+import * as appJson from './app.json';
 
 // Import MQTT client - Buffer is already polyfilled in index.ts
-import mqtt, { MqttClient } from 'precompiled-mqtt';
+import * as mqtt from 'precompiled-mqtt';
+import type { MqttClient } from 'precompiled-mqtt';
 
 const STORAGE_KEYS = {
   USERNAME: 'mqtt_username',
@@ -32,6 +33,7 @@ export default function App() {
   const [pendingCommands] = useState<Map<string, string>>(new Map());
   const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
   const [loadingButton, setLoadingButton] = useState<string | null>(null);
+  const [isInsideView, setIsInsideView] = useState(true); // Default to inside view
 
   // Fix viewport on web, especially for iPhone
   useEffect(() => {
@@ -267,6 +269,16 @@ export default function App() {
       return;
     }
 
+    // Swap left/right commands based on view
+    let actualAction = action;
+    if (action === 'left' || action === 'right') {
+      if (isInsideView) {
+        actualAction = action; // Inside view: left = left, right = right
+      } else {
+        actualAction = action === 'left' ? 'right' : 'left'; // Outside view: swap commands
+      }
+    }
+
     setLoadingButton(action);
     setStatusDotColor('#FFC107'); // Yellow during send
     try {
@@ -274,7 +286,7 @@ export default function App() {
       pendingCommands.set(correlationId, action);
 
       client.publish('gate/control', 
-        JSON.stringify({ action }), 
+        JSON.stringify({ action: actualAction }), 
         { 
           qos: 1,
           properties: {
@@ -451,6 +463,12 @@ export default function App() {
                 {...handleTouch(() => sendCommand('left'))}>
                 <MaterialIcons name="arrow-back" size={32} color="white" />
                 <Text style={styles.buttonText}>Left</Text>
+                <MaterialIcons 
+                  name={isInsideView ? "home" : "park"} 
+                  size={16} 
+                  color="rgba(255, 255, 255, 0.7)" 
+                  style={styles.buttonIndicator}
+                />
               </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.gridButton, loadingButton === 'right' && styles.buttonDisabled]} 
@@ -458,6 +476,12 @@ export default function App() {
                 {...handleTouch(() => sendCommand('right'))}>
                 <MaterialIcons name="arrow-forward" size={32} color="white" />
                 <Text style={styles.buttonText}>Right</Text>
+                <MaterialIcons 
+                  name={isInsideView ? "home" : "park"} 
+                  size={16} 
+                  color="rgba(255, 255, 255, 0.7)" 
+                  style={styles.buttonIndicator}
+                />
               </TouchableOpacity>
             </View>
           </Fragment>
@@ -467,6 +491,35 @@ export default function App() {
             <ActivityIndicator />
           </View>
         ) : null}
+      </View>
+      
+      {/* View Toggle at Bottom */}
+      <View style={styles.viewToggleContainer}>
+        <View style={styles.viewToggleContent}>
+          <MaterialIcons 
+            name="home" 
+            size={28} 
+            color={isInsideView ? "#007AFF" : "#666"} 
+          />
+          <Text style={[styles.viewToggleLabel, { color: isInsideView ? "#007AFF" : "#666" }]}>
+            Inside
+          </Text>
+          <Switch
+            value={!isInsideView}
+            onValueChange={(value) => setIsInsideView(!value)}
+            trackColor={{ false: '#767577', true: '#007AFF' }}
+            thumbColor={isInsideView ? '#f4f3f4' : '#007AFF'}
+            style={styles.largeSwitch}
+          />
+          <Text style={[styles.viewToggleLabel, { color: !isInsideView ? "#007AFF" : "#666" }]}>
+            Outside
+          </Text>
+          <MaterialIcons 
+            name="park" 
+            size={28} 
+            color={!isInsideView ? "#007AFF" : "#666"} 
+          />
+        </View>
       </View>
     </View>
   );
@@ -663,5 +716,31 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  viewToggleContainer: {
+    width: '100%',
+    padding: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#f8f9fa',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  viewToggleContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 15,
+  },
+  viewToggleLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  largeSwitch: {
+    transform: [{ scale: 1.5 }], // Increase the size of the switch
+  },
+  buttonIndicator: {
+    marginTop: 4,
   },
 });
