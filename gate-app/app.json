@@ -2,7 +2,7 @@
   "expo": {
     "name": "gate-app",
     "slug": "gate-app",
-    "version": "1.0.10",
+    "version": "1.0.12",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,14 +16,14 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.edelfam.control",
-      "buildNumber": "10010",
+      "buildNumber": "10012",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.edelfam.control",
-      "versionCode": 10010,
+      "versionCode": 10012,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"

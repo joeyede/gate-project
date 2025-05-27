@@ -1,6 +1,6 @@
 {
   "name": "gate-app",
-  "version": "1.0.10",
+  "version": "1.0.12",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
