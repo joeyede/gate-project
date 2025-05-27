@@ -7,8 +7,9 @@ import * as appJson from './app.json';
 // Add localForage import for web
 let localforage: typeof import('localforage') | null = null;
 if (typeof window !== 'undefined' && Platform.OS === 'web') {
-  // @ts-ignore
-  localforage = require('localforage');
+  (async () => {
+    localforage = (await import('localforage')).default;
+  })();
 }
 
 // Helper to abstract storage
