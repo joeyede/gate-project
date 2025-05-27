@@ -253,7 +253,18 @@ export default function App() {
           }
         });
 
-        saveCredentials(un, pw);
+        // Save credentials when successfully connected (but not during auto-connect)
+        setUsername(un); // Make sure state variables are updated
+        setPassword(pw);
+        
+        // Only save credentials if this wasn't an auto-connect with existing credentials
+        // Auto-connect means credentials are already saved, so don't re-save them
+        if (!providedUsername || !providedPassword) {
+          // This is a manual login, save the credentials
+          saveCredentials(un, pw);
+        } else {
+          console.log('Auto-connect successful - not re-saving already saved credentials');
+        }
         showNotification('Connected successfully');
       });
 
