@@ -162,7 +162,9 @@ export default function App() {
   }, [isConnected]);
 
   useEffect(() => {
-    console.log('App initialized, loading saved preferences');
+    if (__DEV__) {
+      console.log('App initialized, loading saved preferences');
+    }
     
     // Debug storage state first
     storage.debugStorage().then(() => {
@@ -774,15 +776,20 @@ export default function App() {
   };
 
   // Expose functions to global for debugging in console
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      // @ts-ignore
+      declare global {
+        interface Window {
+          testStorage: () => Promise<void>;
+          debugStorage: () => Promise<void>;
+          clearAllStorage: () => Promise<void>;
+        }
+      }
+
       window.testStorage = testStorage;
-      // @ts-ignore - Bind the debugStorage function to maintain 'this' context
       window.debugStorage = storage.debugStorage.bind(storage);
-      // @ts-ignore
       window.clearAllStorage = async () => {
         await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD, STORAGE_KEYS.REMEMBER_ME]);
+        console.log('Cleared all storage');
+      };
         console.log('Cleared all storage');
       };
       console.log('Debug functions available: testStorage(), debugStorage(), clearAllStorage()');
