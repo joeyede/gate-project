@@ -1,6 +1,6 @@
 {
   "name": "gate-app",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -24,6 +24,7 @@
     "expo": "53.0.9",
     "expo-dev-client": "~5.1.8",
     "expo-status-bar": "~2.2.3",
+    "localforage": "^1.10.0",
     "precompiled-mqtt": "^4.3.14-beta",
     "react": "19.0.0",
     "react-dom": "19.0.0",

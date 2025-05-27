@@ -4,6 +4,38 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as appJson from './app.json';
 
+// Add localForage import for web
+let localforage: typeof import('localforage') | null = null;
+if (typeof window !== 'undefined' && Platform.OS === 'web') {
+  (async () => {
+    localforage = (await import('localforage')).default;
+  })();
+}
+
+// Helper to abstract storage
+const storage = {
+  async getItem(key: string) {
+    if (Platform.OS === 'web' && localforage) {
+      return await localforage.getItem<string>(key);
+    }
+    return await AsyncStorage.getItem(key);
+  },
+  async setItem(key: string, value: string) {
+    if (Platform.OS === 'web' && localforage) {
+      await localforage.setItem(key, value);
+      return;
+    }
+    await AsyncStorage.setItem(key, value);
+  },
+  async multiRemove(keys: string[]) {
+    if (Platform.OS === 'web' && localforage) {
+      await Promise.all(keys.map((key) => localforage!.removeItem(key)));
+      return;
+    }
+    await AsyncStorage.multiRemove(keys);
+  }
+};
+
 // Import MQTT client - Buffer is already polyfilled in index.ts
 import * as mqtt from 'precompiled-mqtt';
 import type { MqttClient } from 'precompiled-mqtt';
@@ -130,13 +162,13 @@ export default function App() {
 
   const loadSavedPreferences = async () => {
     try {
-      const savedRememberMe = await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_ME);
+      const savedRememberMe = await storage.getItem(STORAGE_KEYS.REMEMBER_ME);
       setRememberMe(savedRememberMe === 'true');
 
       if (savedRememberMe === 'true') {
-        const savedUsername = await AsyncStorage.getItem(STORAGE_KEYS.USERNAME);
-        const savedPassword = await AsyncStorage.getItem(STORAGE_KEYS.PASSWORD);
-        
+        const savedUsername = await storage.getItem(STORAGE_KEYS.USERNAME);
+        const savedPassword = await storage.getItem(STORAGE_KEYS.PASSWORD);
+
         if (savedUsername && savedPassword) {
           setUsername(savedUsername);
           setPassword(savedPassword);
@@ -151,9 +183,9 @@ export default function App() {
   const handleRememberMeToggle = async (value: boolean) => {
     setRememberMe(value);
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
+      await storage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
       if (!value) {
-        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
       }
     } catch (error) {
       console.error('Failed to update remember me preference:', error);
@@ -163,14 +195,14 @@ export default function App() {
   const saveCredentials = async (username: string, password: string) => {
     try {
       // Always save the remember me preference
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, rememberMe.toString());
-      
+      await storage.setItem(STORAGE_KEYS.REMEMBER_ME, rememberMe.toString());
+
       if (rememberMe) {
-        await AsyncStorage.setItem(STORAGE_KEYS.USERNAME, username);
-        await AsyncStorage.setItem(STORAGE_KEYS.PASSWORD, password);
+        await storage.setItem(STORAGE_KEYS.USERNAME, username);
+        await storage.setItem(STORAGE_KEYS.PASSWORD, password);
       } else {
         // Clear credentials if remember me is false
-        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
       }
     } catch (error) {
       console.error('Failed to save credentials:', error);
@@ -370,20 +402,20 @@ export default function App() {
 
   const handleLogout = async () => {
     if (client) {
-      client.end(false, { 
-        properties: { 
+      client.end(false, {
+        properties: {
           sessionExpiryInterval: 0,
           reasonString: 'User logout'
-        } 
+        }
       }, async () => {
         setClient(null);
         setIsConnected(false);
         setStatus('Logged out');
         showNotification('Logged out successfully');
-        
+
         if (!rememberMe) {
           try {
-            await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+            await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
             setUsername('');
             setPassword('');
           } catch (error) {
