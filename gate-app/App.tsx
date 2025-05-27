@@ -185,7 +185,8 @@ export default function App() {
     try {
       await storage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
       if (!value) {
-        await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        // test only clear on logout
+        //await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
       }
     } catch (error) {
       console.error('Failed to update remember me preference:', error);
@@ -202,7 +203,8 @@ export default function App() {
         await storage.setItem(STORAGE_KEYS.PASSWORD, password);
       } else {
         // Clear credentials if remember me is false
-        await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        // testing only clear on logout
+        //        await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
       }
     } catch (error) {
       console.error('Failed to save credentials:', error);
