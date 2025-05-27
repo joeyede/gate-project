@@ -4,6 +4,70 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as appJson from './app.json';
 
+
+
+// Helper to abstract storage - simplified to use only AsyncStorage
+const storage = {
+  async getItem(key: string): Promise<string | null> {
+    try {
+      const value = await AsyncStorage.getItem(key);
+      console.log(`Storage.getItem: ${key} = ${value !== null ? JSON.stringify(value) : 'null'} (type: ${typeof value})`);
+      return value;
+    } catch (error) {
+      console.error(`Error getting item ${key}:`, error);
+      return null;
+    }
+  },
+  async setItem(key: string, value: string): Promise<void> {
+    try {
+      console.log(`Storage.setItem: ${key} = ${JSON.stringify(value)} (type: ${typeof value})`);
+      await AsyncStorage.setItem(key, value);
+      console.log(`Storage.setItem completed for ${key}`);
+    } catch (error) {
+      console.error(`Error setting item ${key}:`, error);
+    }
+  },
+  async multiRemove(keys: string[]): Promise<void> {
+    try {
+      console.log(`Storage.multiRemove: ${keys.join(', ')}`);
+      await AsyncStorage.multiRemove(keys);
+      console.log(`Storage.multiRemove completed for: ${keys.join(', ')}`);
+    } catch (error) {
+      console.error(`Error removing items ${keys.join(', ')}:`, error);
+    }
+  },
+  // Debug function to see all stored values
+  async getAllKeys(): Promise<readonly string[]> {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      console.log('All AsyncStorage keys:', keys);
+      return keys;
+    } catch (error) {
+      console.error('Error getting all keys:', error);
+      return [];
+    }
+  },
+  async debugStorage(): Promise<void> {
+    try {
+      const keys = await this.getAllKeys();
+      const relevantKeys = keys.filter(key => 
+        key === STORAGE_KEYS.REMEMBER_ME || 
+        key === STORAGE_KEYS.USERNAME || 
+        key === STORAGE_KEYS.PASSWORD
+      );
+      
+      console.log('=== STORAGE DEBUG ===');
+      for (const key of relevantKeys) {
+        const value = await this.getItem(key);
+        console.log(`${key}: ${JSON.stringify(value)}`);
+      }
+      console.log('=== END STORAGE DEBUG ===');
+    } catch (error) {
+      console.error('Error debugging storage:', error);
+    }
+  }
+};
+
 // Import MQTT client - Buffer is already polyfilled in index.ts
 import * as mqtt from 'precompiled-mqtt';
 import type { MqttClient } from 'precompiled-mqtt';
@@ -98,7 +162,14 @@ export default function App() {
   }, [isConnected]);
 
   useEffect(() => {
-    loadSavedPreferences();
+    if (__DEV__) {
+      console.log('App initialized, loading saved preferences');
+    }
+    
+    // Debug storage state first
+    storage.debugStorage().then(() => {
+      loadSavedPreferences();
+    });
   }, []);
 
   useEffect(() => {
@@ -129,19 +200,67 @@ export default function App() {
   };
 
   const loadSavedPreferences = async () => {
+    console.log('Loading saved preferences...');
     try {
-      const savedRememberMe = await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_ME);
-      setRememberMe(savedRememberMe === 'true');
-
-      if (savedRememberMe === 'true') {
-        const savedUsername = await AsyncStorage.getItem(STORAGE_KEYS.USERNAME);
-        const savedPassword = await AsyncStorage.getItem(STORAGE_KEYS.PASSWORD);
-        
-        if (savedUsername && savedPassword) {
-          setUsername(savedUsername);
-          setPassword(savedPassword);
-          connectToMqtt(savedUsername, savedPassword);
+      // Get ALL storage values for debugging
+      const allValues = await Promise.all([
+        storage.getItem(STORAGE_KEYS.REMEMBER_ME),
+        storage.getItem(STORAGE_KEYS.USERNAME),
+        storage.getItem(STORAGE_KEYS.PASSWORD)
+      ]);
+      
+      const [savedRememberMe, savedUsername, savedPassword] = allValues;
+      
+      console.log('Raw storage values retrieved:', {
+        REMEMBER_ME: savedRememberMe,
+        USERNAME: savedUsername ? '***SET***' : null,
+        PASSWORD: savedPassword ? '***SET***' : null
+      });
+      
+      // Default to false if not found or invalid
+      const shouldRemember = savedRememberMe === 'true';
+      console.log('Boolean conversion - savedRememberMe:', JSON.stringify(savedRememberMe), '-> shouldRemember:', shouldRemember);
+      
+      console.log('Setting remember me to:', shouldRemember);
+      setRememberMe(shouldRemember);
+      
+      console.log('Loaded from storage:', {
+        rememberMe: shouldRemember,
+        hasUsername: !!savedUsername,
+        hasPassword: !!savedPassword
+      });
+      
+      // Check for inconsistent state and fix it
+      if (shouldRemember === false && (savedUsername || savedPassword)) {
+        console.warn('Found inconsistent state: Remember Me is OFF but credentials exist. Fixing...');
+        console.warn('State details:', {
+          shouldRemember,
+          savedRememberMe,
+          hasUsername: !!savedUsername,
+          hasPassword: !!savedPassword
+        });
+        try {
+          await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+          console.log('Cleared inconsistent credentials');
+        } catch (e) {
+          console.error('Failed to clear inconsistent credentials:', e);
         }
+      } else if (savedUsername && savedPassword) {
+        // We have credentials, use them
+        console.log('Setting saved username and password');
+        setUsername(savedUsername);
+        setPassword(savedPassword);
+        
+        // Only auto-connect if remember me was true
+        if (shouldRemember) {
+          console.log('Auto-connecting with saved credentials');
+          // Small delay to ensure state is updated
+          setTimeout(() => connectToMqtt(savedUsername, savedPassword), 100);
+        } else {
+          console.log('Found credentials but remember me is false, not auto-connecting');
+        }
+      } else {
+        console.log('No saved credentials found');
       }
     } catch (error) {
       console.error('Failed to load preferences:', error);
@@ -149,11 +268,28 @@ export default function App() {
   };
 
   const handleRememberMeToggle = async (value: boolean) => {
+    console.log('Remember Me toggle changed to:', value);
+    // Update the UI immediately
     setRememberMe(value);
+    
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
+      // Save the remember me setting
+      console.log('About to save remember me setting:', value, 'as string:', value.toString());
+      await storage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
+      console.log('Saved remember me setting:', value);
+      
+      // Verify it was saved correctly by reading it back
+      const verification = await storage.getItem(STORAGE_KEYS.REMEMBER_ME);
+      console.log('Verification read back:', verification, 'matches expected:', verification === value.toString());
+      
+      // If turning off remember me, we should clear credentials when user logs out
+      // We don't clear them here to avoid losing the current connection
       if (!value) {
-        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        console.log('Remember Me turned off - credentials will be cleared on logout');
+      } else if (username && password && isConnected) {
+        // If we're already connected and turning on remember me, save credentials now
+        console.log('Remember Me turned on - saving current credentials');
+        await saveCredentials(username, password);
       }
     } catch (error) {
       console.error('Failed to update remember me preference:', error);
@@ -161,16 +297,40 @@ export default function App() {
   };
 
   const saveCredentials = async (username: string, password: string) => {
+    console.log('Saving credentials, remember me =', rememberMe);
     try {
-      // Always save the remember me preference
-      await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, rememberMe.toString());
+      // Always save the remember me preference first
+      const saveRememberMeSuccess = await persistToStorage(
+        STORAGE_KEYS.REMEMBER_ME, 
+        rememberMe.toString(), 
+        'Remember Me preference'
+      );
       
       if (rememberMe) {
-        await AsyncStorage.setItem(STORAGE_KEYS.USERNAME, username);
-        await AsyncStorage.setItem(STORAGE_KEYS.PASSWORD, password);
+        // Save credentials if remember me is true
+        console.log('Remember Me is ON - saving username and password');
+        
+        // Save username
+        const usernameSuccess = await persistToStorage(
+          STORAGE_KEYS.USERNAME,
+          username,
+          'username'
+        );
+        
+        // Save password
+        const passwordSuccess = await persistToStorage(
+          STORAGE_KEYS.PASSWORD,
+          password,
+          'password'
+        );
+        
+        if (usernameSuccess && passwordSuccess) {
+          console.log('Credentials successfully saved to storage');
+        } else {
+          console.warn('Failed to save some credential data');
+        }
       } else {
-        // Clear credentials if remember me is false
-        await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+        console.log('Remember Me is OFF - credentials will be cleared on logout');
       }
     } catch (error) {
       console.error('Failed to save credentials:', error);
@@ -381,25 +541,28 @@ export default function App() {
 
   const handleLogout = async () => {
     if (client) {
-      client.end(false, { 
-        properties: { 
+      client.end(false, {
+        properties: {
           sessionExpiryInterval: 0,
           reasonString: 'User logout'
-        } 
+        }
       }, async () => {
         setClient(null);
         setIsConnected(false);
         setStatus('Logged out');
         showNotification('Logged out successfully');
-        
-        if (!rememberMe) {
-          try {
-            await AsyncStorage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+
+        try {
+          if (!rememberMe) {
+            console.log('Logging out with Remember Me OFF - clearing credentials');
+            await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
             setUsername('');
             setPassword('');
-          } catch (error) {
-            console.error('Failed to clear credentials:', error);
+          } else {
+            console.log('Logging out with Remember Me ON - keeping saved credentials');
           }
+        } catch (error) {
+          console.error('Failed to handle credentials during logout:', error);
         }
       });
     }
@@ -581,6 +744,57 @@ export default function App() {
       </View>
     </View>
   );
+
+  // Helper to reliably persist data to storage
+  const persistToStorage = async (key: string, value: string, label: string): Promise<boolean> => {
+    try {
+      console.log(`Saving ${label}...`);
+      await storage.setItem(key, value);
+      console.log(`Successfully saved ${label}`);
+      return true;
+    } catch (error) {
+      console.error(`Error saving ${label}:`, error);
+      return false;
+    }
+  };
+
+  // Debug function to test storage manually
+  const testStorage = async () => {
+    console.log('=== MANUAL STORAGE TEST ===');
+    
+    // Test setting and getting remember me
+    console.log('Setting remember_me to "true"...');
+    await storage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
+    
+    console.log('Reading remember_me back...');
+    const value = await storage.getItem(STORAGE_KEYS.REMEMBER_ME);
+    console.log('Retrieved value:', JSON.stringify(value), 'type:', typeof value);
+    console.log('Boolean conversion:', value === 'true');
+    
+    await storage.debugStorage();
+    console.log('=== END MANUAL STORAGE TEST ===');
+  };
+
+  // Expose functions to global for debugging in console
+      declare global {
+        interface Window {
+          testStorage: () => Promise<void>;
+          debugStorage: () => Promise<void>;
+          clearAllStorage: () => Promise<void>;
+        }
+      }
+
+      window.testStorage = testStorage;
+      window.debugStorage = storage.debugStorage.bind(storage);
+      window.clearAllStorage = async () => {
+        await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD, STORAGE_KEYS.REMEMBER_ME]);
+        console.log('Cleared all storage');
+      };
+        console.log('Cleared all storage');
+      };
+      console.log('Debug functions available: testStorage(), debugStorage(), clearAllStorage()');
+    }
+  }, []);
 
   return (
     <Fragment>
