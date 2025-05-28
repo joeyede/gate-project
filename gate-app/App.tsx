@@ -104,6 +104,7 @@ export default function App() {
   const [statusDotColor, setStatusDotColor] = useState('#f44336'); // Default red
   const [loadingButton, setLoadingButton] = useState<string | null>(null);
   const [isInsideView, setIsInsideView] = useState(true); // Default to inside view
+  const [isInitializing, setIsInitializing] = useState(true); // Track initialization state
 
   // Fix viewport on web, especially for iPhone
   useEffect(() => {
@@ -172,9 +173,11 @@ export default function App() {
       console.log('App initialized, loading saved preferences');
     }
     
-    // Debug storage state first
+    // Debug storage state first, then load preferences and set initialization complete
     storage.debugStorage().then(() => {
-      loadSavedPreferences();
+      loadSavedPreferences().finally(() => {
+        setIsInitializing(false);
+      });
     });
   }, []);
 
@@ -260,6 +263,8 @@ export default function App() {
         // Only auto-connect if remember me was true
         if (shouldRemember) {
           console.log('Auto-connecting with saved credentials');
+          setIsConnected(true); // Set connected state immediately to avoid login screen flash
+          setStatus('Connecting...');
           // Small delay to ensure state is updated
           setTimeout(() => connectToMqtt(savedUsername, savedPassword), 100);
         } else {
@@ -462,6 +467,7 @@ export default function App() {
           userFriendlyMessage = 'Connection failed: Invalid username or password';
         }
         setStatus(userFriendlyMessage);
+        setIsConnected(false); // Make sure to reset connection state on error
         showNotification('Connection failed');
       });
 
@@ -559,16 +565,13 @@ export default function App() {
         showNotification('Logged out successfully');
 
         try {
-          if (!rememberMe) {
-            console.log('Logging out with Remember Me OFF - clearing credentials');
-            await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
-            setUsername('');
-            setPassword('');
-          } else {
-            console.log('Logging out with Remember Me ON - keeping saved credentials');
-          }
+          console.log('Logging out - clearing all credentials and remember me setting');
+          await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD, STORAGE_KEYS.REMEMBER_ME]);
+          setUsername('');
+          setPassword('');
+          setRememberMe(false);
         } catch (error) {
-          console.error('Failed to handle credentials during logout:', error);
+          console.error('Failed to clear credentials during logout:', error);
         }
       });
     }
@@ -797,7 +800,15 @@ export default function App() {
   return (
     <Fragment>
       <View style={{ flex: 1 }}>
-        {!isConnected ? renderLoginScreen() : renderMainScreen()}
+        {isInitializing ? (
+          // Show a loading state while checking for saved credentials
+          <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+            <Text style={styles.title}>Gate Control</Text>
+            <Text style={styles.version}>v{appJson.expo.version}</Text>
+            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+            <Text style={[styles.status, { marginTop: 10 }]}>Loading...</Text>
+          </View>
+        ) : !isConnected ? renderLoginScreen() : renderMainScreen()}
       </View>
       
       {/* Notification overlay completely separate from main UI */}
