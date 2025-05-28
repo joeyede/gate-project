@@ -3,7 +3,17 @@ import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity,
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as appJson from './app.json';
+import * as mqtt from 'precompiled-mqtt';
+import type { MqttClient } from 'precompiled-mqtt';
 
+// Extend the global Window interface for debug functions
+declare global {
+  interface Window {
+    testStorage: () => Promise<void>;
+    debugStorage: () => Promise<void>;
+    clearAllStorage: () => Promise<void>;
+  }
+}
 
 
 // Helper to abstract storage - simplified to use only AsyncStorage
@@ -67,10 +77,6 @@ const storage = {
     }
   }
 };
-
-// Import MQTT client - Buffer is already polyfilled in index.ts
-import * as mqtt from 'precompiled-mqtt';
-import type { MqttClient } from 'precompiled-mqtt';
 
 const STORAGE_KEYS = {
   USERNAME: 'mqtt_username',
@@ -775,21 +781,13 @@ export default function App() {
     console.log('=== END MANUAL STORAGE TEST ===');
   };
 
-  // Expose functions to global for debugging in console
-      declare global {
-        interface Window {
-          testStorage: () => Promise<void>;
-          debugStorage: () => Promise<void>;
-          clearAllStorage: () => Promise<void>;
-        }
-      }
-
+  // Expose functions to global for debugging in console (only on web)
+  useEffect(() => {
+    if (Platform.OS === 'web') {
       window.testStorage = testStorage;
       window.debugStorage = storage.debugStorage.bind(storage);
       window.clearAllStorage = async () => {
         await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD, STORAGE_KEYS.REMEMBER_ME]);
-        console.log('Cleared all storage');
-      };
         console.log('Cleared all storage');
       };
       console.log('Debug functions available: testStorage(), debugStorage(), clearAllStorage()');
