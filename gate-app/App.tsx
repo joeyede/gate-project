@@ -168,6 +168,93 @@ export default function App() {
     }
   }, [isConnected]);
 
+  // Handle app visibility changes (when user switches away and back)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      console.log('Visibility changed:', document.hidden ? 'hidden' : 'visible');
+      
+      if (!document.hidden && !isInitializing) {
+        // App became visible again
+        console.log('App became visible. Current state:', {
+          isConnected,
+          hasUsername: !!username,
+          hasPassword: !!password,
+          rememberMe,
+          hasClient: !!client
+        });
+        
+        // Check if we have credentials but lost connection
+        if (!isConnected && username && password && rememberMe) {
+          console.log('Detected lost connection with saved credentials - attempting reconnect');
+          setStatus('Reconnecting...');
+          setTimeout(() => {
+            connectToMqtt(username, password);
+          }, 500); // Small delay to ensure app is fully active
+        }
+      }
+    };
+
+    const handleFocus = () => {
+      console.log('Window gained focus');
+      // Small delay before checking, as visibility change usually fires first
+      setTimeout(() => {
+        if (!document.hidden && !isConnected && username && password && rememberMe && !isInitializing) {
+          console.log('Focus event: attempting reconnect with saved credentials');
+          setStatus('Reconnecting...');
+          setTimeout(() => {
+            connectToMqtt(username, password);
+          }, 500);
+        }
+      }, 1000);
+    };
+
+    if (Platform.OS === 'web') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('focus', handleFocus);
+    }
+    
+    // For React Native, use AppState
+    let appStateSubscription: any;
+    if (Platform.OS !== 'web') {
+      const { AppState } = require('react-native');
+      
+      const handleAppStateChange = (nextAppState: string) => {
+        console.log('App state changed to:', nextAppState);
+        
+        if (nextAppState === 'active' && !isInitializing) {
+          // App became active again
+          console.log('App became active. Current state:', {
+            isConnected,
+            hasUsername: !!username,
+            hasPassword: !!password,
+            rememberMe,
+            hasClient: !!client
+          });
+          
+          // Check if we have credentials but lost connection
+          if (!isConnected && username && password && rememberMe) {
+            console.log('Detected lost connection with saved credentials - attempting reconnect');
+            setStatus('Reconnecting...');
+            setTimeout(() => {
+              connectToMqtt(username, password);
+            }, 500);
+          }
+        }
+      };
+      
+      appStateSubscription = AppState.addEventListener('change', handleAppStateChange);
+    }
+    
+    return () => {
+      if (Platform.OS === 'web') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', handleFocus);
+      } else if (appStateSubscription) {
+        appStateSubscription.remove();
+      }
+    };
+  }, [isConnected, username, password, rememberMe, client, isInitializing]);
+
   useEffect(() => {
     if (__DEV__) {
       console.log('App initialized, loading saved preferences');
@@ -354,12 +441,27 @@ export default function App() {
     
     if (!un || !pw) {
       setStatus('Please enter both username and password');
+      setIsConnected(false);
       return;
+    }
+
+    // Clean up existing client if it exists
+    if (client) {
+      console.log('Cleaning up existing client');
+      try {
+        client.end(true);
+      } catch (e) {
+        console.log('Error cleaning up old client:', e);
+      }
+      setClient(null);
     }
 
     try {
       const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
       const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
+      
+      console.log('Creating new MQTT connection...');
+      setStatus('Connecting...');
       
       const mqttClient = mqtt.connect(connectUrl, {
         clientId,
