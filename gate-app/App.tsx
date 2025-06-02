@@ -1280,8 +1280,7 @@ export default function App() {
       {/* Notification overlay completely separate from main UI */}
       {notification ? (
         <Animated.View 
-          style={[styles.notificationOverlay, { opacity: notificationOpacity }]}
-          pointerEvents="none"
+          style={[styles.notificationOverlay, { opacity: notificationOpacity, pointerEvents: 'none' }]}
         >
           <Text style={styles.notificationText}>{notification}</Text>
         </Animated.View>
