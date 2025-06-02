@@ -27,10 +27,10 @@ import type { MqttClient } from 'precompiled-mqtt';
 // Debug Configuration
 // Set DEBUG_ENABLED to false to disable all console output in production
 // Individual category flags provide fine-grained control when DEBUG_ENABLED is true
-const DEBUG_ENABLED = false; // Master switch - set to false for production
-const DEBUG_STORAGE = false; // Storage operations (load/save credentials, preferences)
-const DEBUG_RECONNECTION = false; // Auto-reconnection logic and app state changes  
-const DEBUG_MQTT = false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
+const DEBUG_ENABLED = true; // Master switch - set to false for production
+const DEBUG_STORAGE = true; // Storage operations (load/save credentials, preferences)
+const DEBUG_RECONNECTION = true; // Auto-reconnection logic and app state changes  
+const DEBUG_MQTT = true; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
 
 /**
  * Centralized debug logging function with category-based filtering
@@ -494,14 +494,20 @@ export default function App() {
           setIsInitializing(false); // Set this immediately so render shows reconnecting screen
           debugLog('🚀 isInitializing set to false, isAutoReconnecting should be true', 'info');
           
+          // CRITICAL: Ensure state variables are updated before attempting connection
+          // This ensures that when the connection succeeds, the state variables are properly set
+          debugLog('🚀 Setting username and password state before auto-reconnect', 'info');
+          setUsername(result.username);
+          setPassword(result.password);
+          
           // Force a render to ensure UI updates
           forceRender();
           
           // Start connection with a delay to ensure state updates have taken effect
           debugLog('🚀 Starting connection in 500ms...', 'info');
           setTimeout(() => {
-            debugLog('🚀 Now calling connectToMqtt with credentials', 'info');
-            connectToMqtt(result.username, result.password);
+            debugLog('🚀 Now calling connectToMqtt with credentials and rememberMe flag', 'info');
+            connectToMqtt(result.username, result.password, true); // Pass true for savedRememberMe since we're auto-reconnecting
           }, 500); // Increased delay to ensure UI shows
         } else {
           // No auto-reconnection, just finish initialization
@@ -674,7 +680,7 @@ export default function App() {
     }
   };
 
-  const connectToMqtt = async (providedUsername?: string, providedPassword?: string): Promise<void> => {
+  const connectToMqtt = async (providedUsername?: string, providedPassword?: string, savedRememberMe?: boolean): Promise<void> => {
     return new Promise((resolve, reject) => {
       const un = providedUsername || username;
       const pw = providedPassword || password;
@@ -770,17 +776,18 @@ export default function App() {
             }
           });
 
-          // Save credentials when successfully connected (but not during auto-connect)
+          // Save credentials when successfully connected
           setUsername(un); // Make sure state variables are updated
           setPassword(pw);
           
-          // Only save credentials if this wasn't an auto-connect with existing credentials
-          // Auto-connect means credentials are already saved, so don't re-save them
-          if (!providedUsername || !providedPassword) {
-            // This is a manual login, save the credentials
+          // Always save credentials if remember me is enabled and we have valid credentials
+          // Use savedRememberMe if provided (during auto-reconnect), otherwise use current state
+          const shouldSaveCredentials = (savedRememberMe !== undefined ? savedRememberMe : rememberMe) && un && pw;
+          if (shouldSaveCredentials) {
+            debugLog(`Connection successful - saving credentials (rememberMe: ${savedRememberMe !== undefined ? savedRememberMe : rememberMe})`, 'info', 'mqtt');
             saveCredentials(un, pw);
           } else {
-            debugLog('Auto-connect successful - not re-saving already saved credentials', 'info', 'mqtt');
+            debugLog(`Connection successful - not saving credentials (rememberMe: ${savedRememberMe !== undefined ? savedRememberMe : rememberMe}, hasCredentials: ${!!(un && pw)})`, 'info', 'mqtt');
           }
           showNotification('Connected successfully');
           resolve(); // Connection successful
@@ -952,6 +959,8 @@ export default function App() {
 
   const handleSubmit = () => {
     if (username && password) {
+      debugLog(`Manual login attempt with username: ${username}`, 'info', 'mqtt');
+      
       // Set auto-reconnecting state to show visual feedback during connection
       setIsAutoReconnecting(true);
       setStatus('Connecting...');
@@ -962,10 +971,14 @@ export default function App() {
         setIsAutoReconnecting(false);
       }, 10000); // 10 second timeout
       
-      connectToMqtt().finally(() => {
+      // Pass the current username and password explicitly for manual login
+      connectToMqtt(username, password).finally(() => {
         // Clear the timeout since connection attempt completed
         clearTimeout(timeoutId);
       });
+    } else {
+      debugLog('Handle submit called without valid credentials', 'error');
+      setStatus('Please enter both username and password');
     }
   };
 
@@ -1224,9 +1237,25 @@ export default function App() {
               </View>
             );
           } else if (!isConnected) {
-            // Check if we have saved credentials - show reconnecting screen instead of login
+            // Check if we have saved credentials - show reconnecting screen and attempt reconnection
             if (username && password && rememberMe && !isAutoReconnecting) {
-              debugLog(`🖥️ [${timestamp}] Have credentials but not connected - showing reconnecting screen instead of login`, 'info');
+              debugLog(`🖥️ [${timestamp}] Have credentials but not connected - starting auto-reconnection`, 'info');
+              
+              // Start auto-reconnection immediately
+              setIsAutoReconnecting(true);
+              setStatus('Reconnecting...');
+              
+              // Set a timeout to clear auto-reconnecting state if connection takes too long
+              const timeoutId = setTimeout(() => {
+                debugLog('Render-triggered auto-reconnection timeout - clearing auto-reconnecting state', 'warning');
+                setIsAutoReconnecting(false);
+              }, 10000); // 10 second timeout
+              
+              // Start connection attempt
+              connectToMqtt(username, password).finally(() => {
+                clearTimeout(timeoutId);
+              });
+              
               return (
                 <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
                   <Text style={styles.title}>Gate Control</Text>
