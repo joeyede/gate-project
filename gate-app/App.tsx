@@ -1260,7 +1260,7 @@ export default function App() {
               }, 10000); // 10 second timeout
               
               // Start connection attempt
-              connectToMqtt(username, password,rememberMe).finally(() => {
+              connectToMqtt(username, password, rememberMe).finally(() => {
                 clearTimeout(timeoutId);
               });
               
@@ -1287,7 +1287,8 @@ export default function App() {
       {/* Notification overlay completely separate from main UI */}
       {notification ? (
         <Animated.View 
-          style={[styles.notificationOverlay, { opacity: notificationOpacity, pointerEvents: 'none' }]}
+          style={[styles.notificationOverlay, { opacity: notificationOpacity }]}
+          pointerEvents="none"
         >
           <Text style={styles.notificationText}>{notification}</Text>
         </Animated.View>
