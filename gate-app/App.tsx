@@ -1001,9 +1001,9 @@ const styles = StyleSheet.create({
   },
   notificationOverlay: {
     position: 'absolute',
-    bottom: 40,
-    left: 0,
-    right: 0,
+    top: Platform.OS === 'web' ? 60 : 80, // Account for status bar on mobile
+    left: 20,
+    right: 20,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 9999,
@@ -1011,6 +1011,16 @@ const styles = StyleSheet.create({
   notificationText: {
     color: '#fff',
     fontSize: 14,
+    fontWeight: '500',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 8,
+    textAlign: 'center',
+    overflow: 'hidden',
+    ...(Platform.OS === 'web' && {
+      maxWidth: 400,
+    }),
   },
   connectButton: {
     width: '100%',
