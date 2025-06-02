@@ -27,10 +27,11 @@ import type { MqttClient } from 'precompiled-mqtt';
 // Debug Configuration
 // Set DEBUG_ENABLED to false to disable all console output in production
 // Individual category flags provide fine-grained control when DEBUG_ENABLED is true
-const DEBUG_ENABLED = false; // Master switch - set to false for production
-const DEBUG_STORAGE = false; // Storage operations (load/save credentials, preferences)
-const DEBUG_RECONNECTION = false; // Auto-reconnection logic and app state changes  
-const DEBUG_MQTT = false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
+const ALL_DEBUG_ON = true; // Set to true to enable all debug categories
+const DEBUG_ENABLED = ALL_DEBUG_ON || false; // Master switch - set to false for production
+const DEBUG_STORAGE = ALL_DEBUG_ON || false; // Storage operations (load/save credentials, preferences)
+const DEBUG_RECONNECTION = ALL_DEBUG_ON ||false; // Auto-reconnection logic and app state changes  
+const DEBUG_MQTT = ALL_DEBUG_ON || false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
 
 /**
  * Centralized debug logging function with category-based filtering
@@ -155,6 +156,7 @@ export default function App() {
   const [isInsideView, setIsInsideView] = useState(true); // Default to inside view
   const [isInitializing, setIsInitializing] = useState(true); // Track initialization state
   const [isAutoReconnecting, setIsAutoReconnecting] = useState(false); // Track auto-reconnection attempts
+  const [onFreshLoginScreen, setOnFreshLoginScreen] = useState(true); // True if on login screen before first connect/after logout
   const [forceRenderKey, setForceRenderKey] = useState(0); // Force re-renders on mobile
   const [showDebugPanel, setShowDebugPanel] = useState(false); // Toggle debug panel
   const [debugLogs, setDebugLogs] = useState<Array<{timestamp: string, message: string, type: 'info' | 'error' | 'success' | 'warning'}>>([]);
@@ -335,7 +337,7 @@ export default function App() {
           }, 10000); // 10 second timeout
           
           // Start connection immediately without delay
-          connectToMqtt(username, password).finally(() => {
+          connectToMqtt(username, password, rememberMe).finally(() => {
             // Clear the timeout since connection attempt completed
             clearTimeout(timeoutId);
           });
@@ -369,7 +371,7 @@ export default function App() {
           }, 10000); // 10 second timeout
           
           // Start connection immediately without delay
-          connectToMqtt(username, password).finally(() => {
+          connectToMqtt(username, password, rememberMe).finally(() => {
             // Clear the timeout since connection attempt completed
             clearTimeout(timeoutId);
           });
@@ -446,7 +448,7 @@ export default function App() {
             }, 10000); // 10 second timeout
             
             // Start connection immediately without delay
-            connectToMqtt(username, password).finally(() => {
+            connectToMqtt(username, password, rememberMe).finally(() => {
               // Clear the timeout since connection attempt completed
               clearTimeout(timeoutId);
             });
@@ -492,6 +494,7 @@ export default function App() {
           debugLog('🚀 Starting auto-reconnection with saved credentials: ' + result.username, 'info');
           debugLog('🚀 Setting isInitializing to false...', 'info');
           setIsInitializing(false); // Set this immediately so render shows reconnecting screen
+          setOnFreshLoginScreen(false); // Not a fresh login screen if auto-connecting
           debugLog('🚀 isInitializing set to false, isAutoReconnecting should be true', 'info');
           
           // CRITICAL: Ensure state variables are updated before attempting connection
@@ -513,10 +516,12 @@ export default function App() {
           // No auto-reconnection, just finish initialization
           debugLog('🚀 No auto-reconnection, finishing initialization', 'info');
           setIsInitializing(false);
+          setOnFreshLoginScreen(true); // Will show login screen
         }
       }).catch((error) => {
         debugLog(`🚀 Error loading preferences: ${error}`, 'error');
         setIsInitializing(false);
+        setOnFreshLoginScreen(true); // Error, default to showing login screen
       });
     });
   }, []);
@@ -615,41 +620,35 @@ export default function App() {
     // Update the UI immediately
     setRememberMe(value);
     
-    try {
-      // Save the remember me setting
-      debugLog('About to save remember me setting: ' + value + ' as string: ' + value.toString(), 'info', 'storage');
-      await storage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
-      debugLog('Saved remember me setting: ' + value, 'success', 'storage');
-      
-      // Verify it was saved correctly by reading it back
-      const verification = await storage.getItem(STORAGE_KEYS.REMEMBER_ME);
-      debugLog('Verification read back: ' + verification + ' matches expected: ' + (verification === value.toString()), 'info', 'storage');
-      
-      // If turning off remember me, we should clear credentials when user logs out
-      // We don't clear them here to avoid losing the current connection
-      if (!value) {
-        debugLog('Remember Me turned off - credentials will be cleared on logout', 'warning', 'storage');
-      } else if (username && password && isConnected) {
-        // If we're already connected and turning on remember me, save credentials now
-        debugLog('Remember Me turned on - saving current credentials', 'info', 'storage');
-        await saveCredentials(username, password);
-      }
-    } catch (error) {
-      debugLog(`Failed to update remember me preference: ${error}`, 'error', 'storage');
+    // Don't save to storage immediately - only save when connection succeeds
+    // This prevents the storage from getting out of sync with the actual intention
+    
+    // If turning off remember me and we're connected, we might want to clear credentials on logout
+    if (!value) {
+      debugLog('Remember Me turned off - credentials will be cleared on logout', 'warning', 'storage');
+    } else if (username && password && isConnected) {
+      // If we're already connected and turning on remember me, save credentials now
+      debugLog('Remember Me turned on - saving current credentials', 'info', 'storage');
+      // try {
+      //   await saveCredentials(username, password, value);
+      // } catch (error) {
+      //   debugLog(`Failed to save credentials when toggling remember me: ${error}`, 'error', 'storage');
+      // }
     }
   };
 
-  const saveCredentials = async (username: string, password: string) => {
-    debugLog('Saving credentials, remember me = ' + rememberMe, 'info', 'storage');
+  const saveCredentials = async (username: string, password: string, rememberMeValue?: boolean) => {
+    const effectiveRememberMe = rememberMeValue !== undefined ? rememberMeValue : rememberMe;
+    debugLog('Saving credentials, remember me = ' + effectiveRememberMe, 'info', 'storage');
     try {
       // Always save the remember me preference first
       const saveRememberMeSuccess = await persistToStorage(
         STORAGE_KEYS.REMEMBER_ME, 
-        rememberMe.toString(), 
+        effectiveRememberMe.toString(), 
         'Remember Me preference'
       );
       
-      if (rememberMe) {
+      if (effectiveRememberMe) {
         // Save credentials if remember me is true
         debugLog('Remember Me is ON - saving username and password', 'info', 'storage');
         
@@ -673,7 +672,13 @@ export default function App() {
           debugLog('Failed to save some credential data', 'warning', 'storage');
         }
       } else {
-        debugLog('Remember Me is OFF - credentials will be cleared on logout', 'info', 'storage');
+        debugLog('Remember Me is OFF - clearing any existing credentials', 'info', 'storage');
+        try {
+          await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+          debugLog('Cleared credentials since Remember Me is OFF', 'success', 'storage');
+        } catch (error) {
+          debugLog(`Failed to clear credentials: ${error}`, 'error', 'storage');
+        }
       }
     } catch (error) {
       debugLog(`Failed to save credentials: ${error}`, 'error', 'storage');
@@ -785,7 +790,7 @@ export default function App() {
           const shouldSaveCredentials = (savedRememberMe !== undefined ? savedRememberMe : rememberMe) && un && pw;
           if (shouldSaveCredentials) {
             debugLog(`Connection successful - saving credentials (rememberMe: ${savedRememberMe !== undefined ? savedRememberMe : rememberMe})`, 'info', 'mqtt');
-            saveCredentials(un, pw);
+            saveCredentials(un, pw, savedRememberMe !== undefined ? savedRememberMe : rememberMe);
           } else {
             debugLog(`Connection successful - not saving credentials (rememberMe: ${savedRememberMe !== undefined ? savedRememberMe : rememberMe}, hasCredentials: ${!!(un && pw)})`, 'info', 'mqtt');
           }
@@ -940,6 +945,7 @@ export default function App() {
           setUsername('');
           setPassword('');
           setRememberMe(false);
+          setOnFreshLoginScreen(true); // Back to a fresh login screen
         } catch (error) {
           debugLog(`Failed to clear credentials during logout: ${error}`, 'error');
         }
@@ -960,6 +966,7 @@ export default function App() {
   const handleSubmit = () => {
     if (username && password) {
       debugLog(`Manual login attempt with username: ${username}`, 'info', 'mqtt');
+      setOnFreshLoginScreen(false); // User is initiating a connection attempt
       
       // Set auto-reconnecting state to show visual feedback during connection
       setIsAutoReconnecting(true);
@@ -1222,7 +1229,7 @@ export default function App() {
                 <Text style={styles.version}>v{appJson.expo.version}</Text>
                 <View style={[styles.connectionDot, { backgroundColor: '#FFC107', marginTop: 20 }]} />
                 <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
-                <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Reconnecting...</Text>
+                <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Connecting...</Text>
                 <Text style={[styles.version, { marginTop: 10, fontStyle: 'italic' }]}>Restoring your session</Text>
               </View>
             );
@@ -1238,8 +1245,9 @@ export default function App() {
             );
           } else if (!isConnected) {
             // Check if we have saved credentials - show reconnecting screen and attempt reconnection
-            if (username && password && rememberMe && !isAutoReconnecting) {
-              debugLog(`🖥️ [${timestamp}] Have credentials but not connected - starting auto-reconnection`, 'info');
+            // This should only trigger for "lost connection" scenarios, not on a fresh login screen.
+            if (username && password && rememberMe && !isAutoReconnecting && !onFreshLoginScreen) { 
+              debugLog(`🖥️ [${timestamp}] Lost connection with rememberMe ON (and not on fresh login) - starting auto-reconnection`, 'info');
               
               // Start auto-reconnection immediately
               setIsAutoReconnecting(true);
@@ -1252,7 +1260,7 @@ export default function App() {
               }, 10000); // 10 second timeout
               
               // Start connection attempt
-              connectToMqtt(username, password).finally(() => {
+              connectToMqtt(username, password, rememberMe).finally(() => {
                 clearTimeout(timeoutId);
               });
               
