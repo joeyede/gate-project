@@ -1222,7 +1222,7 @@ export default function App() {
                 <Text style={styles.version}>v{appJson.expo.version}</Text>
                 <View style={[styles.connectionDot, { backgroundColor: '#FFC107', marginTop: 20 }]} />
                 <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
-                <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Reconnecting...</Text>
+                <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Connecting...</Text>
                 <Text style={[styles.version, { marginTop: 10, fontStyle: 'italic' }]}>Restoring your session</Text>
               </View>
             );
