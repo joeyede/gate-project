@@ -156,6 +156,7 @@ export default function App() {
   const [isInsideView, setIsInsideView] = useState(true); // Default to inside view
   const [isInitializing, setIsInitializing] = useState(true); // Track initialization state
   const [isAutoReconnecting, setIsAutoReconnecting] = useState(false); // Track auto-reconnection attempts
+  const [onFreshLoginScreen, setOnFreshLoginScreen] = useState(true); // True if on login screen before first connect/after logout
   const [forceRenderKey, setForceRenderKey] = useState(0); // Force re-renders on mobile
   const [showDebugPanel, setShowDebugPanel] = useState(false); // Toggle debug panel
   const [debugLogs, setDebugLogs] = useState<Array<{timestamp: string, message: string, type: 'info' | 'error' | 'success' | 'warning'}>>([]);
@@ -336,7 +337,7 @@ export default function App() {
           }, 10000); // 10 second timeout
           
           // Start connection immediately without delay
-          connectToMqtt(username, password).finally(() => {
+          connectToMqtt(username, password, rememberMe).finally(() => {
             // Clear the timeout since connection attempt completed
             clearTimeout(timeoutId);
           });
@@ -370,7 +371,7 @@ export default function App() {
           }, 10000); // 10 second timeout
           
           // Start connection immediately without delay
-          connectToMqtt(username, password).finally(() => {
+          connectToMqtt(username, password, rememberMe).finally(() => {
             // Clear the timeout since connection attempt completed
             clearTimeout(timeoutId);
           });
@@ -447,7 +448,7 @@ export default function App() {
             }, 10000); // 10 second timeout
             
             // Start connection immediately without delay
-            connectToMqtt(username, password).finally(() => {
+            connectToMqtt(username, password, rememberMe).finally(() => {
               // Clear the timeout since connection attempt completed
               clearTimeout(timeoutId);
             });
@@ -493,6 +494,7 @@ export default function App() {
           debugLog('🚀 Starting auto-reconnection with saved credentials: ' + result.username, 'info');
           debugLog('🚀 Setting isInitializing to false...', 'info');
           setIsInitializing(false); // Set this immediately so render shows reconnecting screen
+          setOnFreshLoginScreen(false); // Not a fresh login screen if auto-connecting
           debugLog('🚀 isInitializing set to false, isAutoReconnecting should be true', 'info');
           
           // CRITICAL: Ensure state variables are updated before attempting connection
@@ -514,10 +516,12 @@ export default function App() {
           // No auto-reconnection, just finish initialization
           debugLog('🚀 No auto-reconnection, finishing initialization', 'info');
           setIsInitializing(false);
+          setOnFreshLoginScreen(true); // Will show login screen
         }
       }).catch((error) => {
         debugLog(`🚀 Error loading preferences: ${error}`, 'error');
         setIsInitializing(false);
+        setOnFreshLoginScreen(true); // Error, default to showing login screen
       });
     });
   }, []);
@@ -625,11 +629,11 @@ export default function App() {
     } else if (username && password && isConnected) {
       // If we're already connected and turning on remember me, save credentials now
       debugLog('Remember Me turned on - saving current credentials', 'info', 'storage');
-      try {
-        await saveCredentials(username, password, value);
-      } catch (error) {
-        debugLog(`Failed to save credentials when toggling remember me: ${error}`, 'error', 'storage');
-      }
+      // try {
+      //   await saveCredentials(username, password, value);
+      // } catch (error) {
+      //   debugLog(`Failed to save credentials when toggling remember me: ${error}`, 'error', 'storage');
+      // }
     }
   };
 
@@ -941,6 +945,7 @@ export default function App() {
           setUsername('');
           setPassword('');
           setRememberMe(false);
+          setOnFreshLoginScreen(true); // Back to a fresh login screen
         } catch (error) {
           debugLog(`Failed to clear credentials during logout: ${error}`, 'error');
         }
@@ -961,6 +966,7 @@ export default function App() {
   const handleSubmit = () => {
     if (username && password) {
       debugLog(`Manual login attempt with username: ${username}`, 'info', 'mqtt');
+      setOnFreshLoginScreen(false); // User is initiating a connection attempt
       
       // Set auto-reconnecting state to show visual feedback during connection
       setIsAutoReconnecting(true);
@@ -1239,8 +1245,9 @@ export default function App() {
             );
           } else if (!isConnected) {
             // Check if we have saved credentials - show reconnecting screen and attempt reconnection
-            if (username && password && rememberMe && !isAutoReconnecting) {
-              debugLog(`🖥️ [${timestamp}] Have credentials but not connected - starting auto-reconnection`, 'info');
+            // This should only trigger for "lost connection" scenarios, not on a fresh login screen.
+            if (username && password && rememberMe && !isAutoReconnecting && !onFreshLoginScreen) { 
+              debugLog(`🖥️ [${timestamp}] Lost connection with rememberMe ON (and not on fresh login) - starting auto-reconnection`, 'info');
               
               // Start auto-reconnection immediately
               setIsAutoReconnecting(true);
@@ -1253,7 +1260,7 @@ export default function App() {
               }, 10000); // 10 second timeout
               
               // Start connection attempt
-              connectToMqtt(username, password).finally(() => {
+              connectToMqtt(username, password,rememberMe).finally(() => {
                 clearTimeout(timeoutId);
               });
               
