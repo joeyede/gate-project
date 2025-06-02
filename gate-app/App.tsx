@@ -105,6 +105,7 @@ export default function App() {
   const [loadingButton, setLoadingButton] = useState<string | null>(null);
   const [isInsideView, setIsInsideView] = useState(true); // Default to inside view
   const [isInitializing, setIsInitializing] = useState(true); // Track initialization state
+  const [isAutoReconnecting, setIsAutoReconnecting] = useState(false); // Track auto-reconnection attempts
 
   // Fix viewport on web, especially for iPhone
   useEffect(() => {
@@ -186,9 +187,20 @@ export default function App() {
         // Check if we have credentials but lost connection
         if (!isConnected && username && password && rememberMe) {
           console.log('Detected lost connection with saved credentials - attempting reconnect');
+          setIsAutoReconnecting(true);
           setStatus('Reconnecting...');
+          
+          // Set a timeout to clear auto-reconnecting state if connection takes too long
+          const timeoutId = setTimeout(() => {
+            console.log('Auto-reconnection timeout - clearing auto-reconnecting state');
+            setIsAutoReconnecting(false);
+          }, 10000); // 10 second timeout
+          
           setTimeout(() => {
-            connectToMqtt(username, password);
+            connectToMqtt(username, password).finally(() => {
+              // Clear the timeout since connection attempt completed
+              clearTimeout(timeoutId);
+            });
           }, 500); // Small delay to ensure app is fully active
         }
       }
@@ -200,9 +212,20 @@ export default function App() {
       setTimeout(() => {
         if (!document.hidden && !isConnected && username && password && rememberMe && !isInitializing) {
           console.log('Focus event: attempting reconnect with saved credentials');
+          setIsAutoReconnecting(true);
           setStatus('Reconnecting...');
+          
+          // Set a timeout to clear auto-reconnecting state if connection takes too long
+          const timeoutId = setTimeout(() => {
+            console.log('Auto-reconnection timeout - clearing auto-reconnecting state');
+            setIsAutoReconnecting(false);
+          }, 10000); // 10 second timeout
+          
           setTimeout(() => {
-            connectToMqtt(username, password);
+            connectToMqtt(username, password).finally(() => {
+              // Clear the timeout since connection attempt completed
+              clearTimeout(timeoutId);
+            });
           }, 500);
         }
       }, 1000);
@@ -234,9 +257,20 @@ export default function App() {
           // Check if we have credentials but lost connection
           if (!isConnected && username && password && rememberMe) {
             console.log('Detected lost connection with saved credentials - attempting reconnect');
+            setIsAutoReconnecting(true);
             setStatus('Reconnecting...');
+            
+            // Set a timeout to clear auto-reconnecting state if connection takes too long
+            const timeoutId = setTimeout(() => {
+              console.log('Auto-reconnection timeout - clearing auto-reconnecting state');
+              setIsAutoReconnecting(false);
+            }, 10000); // 10 second timeout
+            
             setTimeout(() => {
-              connectToMqtt(username, password);
+              connectToMqtt(username, password).finally(() => {
+                // Clear the timeout since connection attempt completed
+                clearTimeout(timeoutId);
+              });
             }, 500);
           }
         }
@@ -253,7 +287,7 @@ export default function App() {
         appStateSubscription.remove();
       }
     };
-  }, [isConnected, username, password, rememberMe, client, isInitializing]);
+  }, [isConnected, username, password, rememberMe, client, isInitializing, isAutoReconnecting]);
 
   useEffect(() => {
     if (__DEV__) {
@@ -435,154 +469,164 @@ export default function App() {
     }
   };
 
-  const connectToMqtt = async (providedUsername?: string, providedPassword?: string) => {
-    const un = providedUsername || username;
-    const pw = providedPassword || password;
-    
-    if (!un || !pw) {
-      setStatus('Please enter both username and password');
-      setIsConnected(false);
-      return;
-    }
-
-    // Clean up existing client if it exists
-    if (client) {
-      console.log('Cleaning up existing client');
-      try {
-        client.end(true);
-      } catch (e) {
-        console.log('Error cleaning up old client:', e);
-      }
-      setClient(null);
-    }
-
-    try {
-      const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
-      const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
+  const connectToMqtt = async (providedUsername?: string, providedPassword?: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const un = providedUsername || username;
+      const pw = providedPassword || password;
       
-      console.log('Creating new MQTT connection...');
-      setStatus('Connecting...');
-      
-      const mqttClient = mqtt.connect(connectUrl, {
-        clientId,
-        username: un,
-        password: pw,
-        clean: true,
-        reconnectPeriod: 3000,
-        keepalive: 30,
-        protocolVersion: 5,
-        protocol: 'wss',
-        rejectUnauthorized: false,
-        properties: {
-          sessionExpiryInterval: 300,
-          receiveMaximum: 100,
-          maximumPacketSize: 1024
-        },
-        will: {
-          topic: 'gate/clients',
-          payload: JSON.stringify({ clientId, status: 'offline' }),
-          qos: 1,
-          retain: false,
-          properties: {
-            willDelayInterval: 0,
-            payloadFormatIndicator: true,
-            messageExpiryInterval: 300
-          }
-        }
-      });
-
-      mqttClient.on('connect', () => {
-        console.log('Connected to MQTT');
-        setStatus('Connected');
-        setIsConnected(true);
-        setStatusDotColor('#4CAF50'); // Set dot to green on successful connection
-        setClient(mqttClient);
-        
-        mqttClient.subscribe('gate/status', {
-          qos: 1,
-          properties: {
-            subscriptionIdentifier: 100,
-            userProperties: {
-              app: 'gate-control'
-            }
-          }
-        }, (err) => {
-          if (err) {
-            console.error('Subscribe error:', err);
-          }
-        });
-
-        mqttClient.subscribe('gate/responses/#', {
-          qos: 1,
-          properties: {
-            subscriptionIdentifier: 101,
-            userProperties: {
-              app: 'gate-control'
-            }
-          }
-        }, (err) => {
-          if (err) {
-            console.error('Subscribe error:', err);
-          }
-        });
-
-        // Save credentials when successfully connected (but not during auto-connect)
-        setUsername(un); // Make sure state variables are updated
-        setPassword(pw);
-        
-        // Only save credentials if this wasn't an auto-connect with existing credentials
-        // Auto-connect means credentials are already saved, so don't re-save them
-        if (!providedUsername || !providedPassword) {
-          // This is a manual login, save the credentials
-          saveCredentials(un, pw);
-        } else {
-          console.log('Auto-connect successful - not re-saving already saved credentials');
-        }
-        showNotification('Connected successfully');
-      });
-
-      mqttClient.on('message', (topic, payload, packet) => {
-        console.log('Message received:', topic, payload.toString(), packet);
-        if (topic.startsWith('gate/responses/')) {
-            try {
-                const data = JSON.parse(payload.toString());
-                if (packet.properties?.correlationData) {
-                    const correlationId = Buffer.from(packet.properties.correlationData).toString();
-                    const action = pendingCommands.get(correlationId);
-                    if (action) {
-                        pendingCommands.delete(correlationId);
-                        const status = data.status === 'success' ? 'Success' : 'Failed';
-                        setStatus(`${action}: ${status}`);
-                        setStatusDotColor(data.status === 'success' ? '#4CAF50' : '#f44336'); // Green on success, red on failure
-                    }
-                }
-            } catch (error) {
-                console.error('Error parsing response:', error);
-            }
-        }
-      });
-
-      mqttClient.on('error', (err) => {
-        console.error('MQTT Error:', err);
-        let userFriendlyMessage = 'Connection failed';
-        if (err.message?.includes('not authorized')) {
-          userFriendlyMessage = 'Connection failed: Invalid username or password';
-        }
-        setStatus(userFriendlyMessage);
-        setIsConnected(false); // Make sure to reset connection state on error
-        showNotification('Connection failed');
-      });
-
-      mqttClient.on('close', () => {
-        console.log('Connection closed');
-        setStatus('Disconnected');
+      if (!un || !pw) {
+        setStatus('Please enter both username and password');
         setIsConnected(false);
-      });
+        reject(new Error('Missing credentials'));
+        return;
+      }
 
-    } catch (error) {
-      console.error('Setup error:', error);
-      setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
-    }
+      // Clean up existing client if it exists
+      if (client) {
+        console.log('Cleaning up existing client');
+        try {
+          client.end(true);
+        } catch (e) {
+          console.log('Error cleaning up old client:', e);
+        }
+        setClient(null);
+      }
+
+      try {
+        const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
+        const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
+        
+        console.log('Creating new MQTT connection...');
+        setStatus('Connecting...');
+        
+        const mqttClient = mqtt.connect(connectUrl, {
+          clientId,
+          username: un,
+          password: pw,
+          clean: true,
+          reconnectPeriod: 3000,
+          keepalive: 30,
+          protocolVersion: 5,
+          protocol: 'wss',
+          rejectUnauthorized: false,
+          properties: {
+            sessionExpiryInterval: 300,
+            receiveMaximum: 100,
+            maximumPacketSize: 1024
+          },
+          will: {
+            topic: 'gate/clients',
+            payload: JSON.stringify({ clientId, status: 'offline' }),
+            qos: 1,
+            retain: false,
+            properties: {
+              willDelayInterval: 0,
+              payloadFormatIndicator: true,
+              messageExpiryInterval: 300
+            }
+          }
+        });
+
+        mqttClient.on('connect', () => {
+          console.log('Connected to MQTT');
+          setStatus('Connected');
+          setIsConnected(true);
+          setIsAutoReconnecting(false); // Clear auto-reconnection state
+          setStatusDotColor('#4CAF50'); // Set dot to green on successful connection
+          setClient(mqttClient);
+          
+          mqttClient.subscribe('gate/status', {
+            qos: 1,
+            properties: {
+              subscriptionIdentifier: 100,
+              userProperties: {
+                app: 'gate-control'
+              }
+            }
+          }, (err) => {
+            if (err) {
+              console.error('Subscribe error:', err);
+            }
+          });
+
+          mqttClient.subscribe('gate/responses/#', {
+            qos: 1,
+            properties: {
+              subscriptionIdentifier: 101,
+              userProperties: {
+                app: 'gate-control'
+              }
+            }
+          }, (err) => {
+            if (err) {
+              console.error('Subscribe error:', err);
+            }
+          });
+
+          // Save credentials when successfully connected (but not during auto-connect)
+          setUsername(un); // Make sure state variables are updated
+          setPassword(pw);
+          
+          // Only save credentials if this wasn't an auto-connect with existing credentials
+          // Auto-connect means credentials are already saved, so don't re-save them
+          if (!providedUsername || !providedPassword) {
+            // This is a manual login, save the credentials
+            saveCredentials(un, pw);
+          } else {
+            console.log('Auto-connect successful - not re-saving already saved credentials');
+          }
+          showNotification('Connected successfully');
+          resolve(); // Connection successful
+        });
+
+        mqttClient.on('message', (topic, payload, packet) => {
+          console.log('Message received:', topic, payload.toString(), packet);
+          if (topic.startsWith('gate/responses/')) {
+              try {
+                  const data = JSON.parse(payload.toString());
+                  if (packet.properties?.correlationData) {
+                      const correlationId = Buffer.from(packet.properties.correlationData).toString();
+                      const action = pendingCommands.get(correlationId);
+                      if (action) {
+                          pendingCommands.delete(correlationId);
+                          const status = data.status === 'success' ? 'Success' : 'Failed';
+                          setStatus(`${action}: ${status}`);
+                          setStatusDotColor(data.status === 'success' ? '#4CAF50' : '#f44336'); // Green on success, red on failure
+                      }
+                  }
+              } catch (error) {
+                  console.error('Error parsing response:', error);
+              }
+          }
+        });
+
+        mqttClient.on('error', (err) => {
+          console.error('MQTT Error:', err);
+          let userFriendlyMessage = 'Connection failed';
+          if (err.message?.includes('not authorized')) {
+            userFriendlyMessage = 'Connection failed: Invalid username or password';
+          }
+          setStatus(userFriendlyMessage);
+          setIsConnected(false); // Make sure to reset connection state on error
+          setIsAutoReconnecting(false); // Clear auto-reconnection state on error
+          showNotification('Connection failed');
+          reject(err); // Connection failed
+        });
+
+        mqttClient.on('close', () => {
+          console.log('Connection closed');
+          setStatus('Disconnected');
+          setIsConnected(false);
+          setIsAutoReconnecting(false); // Clear auto-reconnection state
+        });
+
+      } catch (error) {
+        console.error('Setup error:', error);
+        setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
+        setIsAutoReconnecting(false); // Clear auto-reconnection state on setup error
+        reject(error); // Setup failed
+      }
+    });
   };
 
   const sendCommand = (action: string) => {
@@ -909,6 +953,16 @@ export default function App() {
             <Text style={styles.version}>v{appJson.expo.version}</Text>
             <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
             <Text style={[styles.status, { marginTop: 10 }]}>Loading...</Text>
+          </View>
+        ) : isAutoReconnecting ? (
+          // Show a reconnecting state when auto-reconnecting
+          <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+            <Text style={styles.title}>Gate Control</Text>
+            <Text style={styles.version}>v{appJson.expo.version}</Text>
+            <View style={[styles.connectionDot, { backgroundColor: '#FFC107', marginTop: 20 }]} />
+            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+            <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Reconnecting...</Text>
+            <Text style={[styles.version, { marginTop: 10, fontStyle: 'italic' }]}>Restoring your session</Text>
           </View>
         ) : !isConnected ? renderLoginScreen() : renderMainScreen()}
       </View>
