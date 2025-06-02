@@ -27,10 +27,11 @@ import type { MqttClient } from 'precompiled-mqtt';
 // Debug Configuration
 // Set DEBUG_ENABLED to false to disable all console output in production
 // Individual category flags provide fine-grained control when DEBUG_ENABLED is true
-const DEBUG_ENABLED = false; // Master switch - set to false for production
-const DEBUG_STORAGE = false; // Storage operations (load/save credentials, preferences)
-const DEBUG_RECONNECTION = false; // Auto-reconnection logic and app state changes  
-const DEBUG_MQTT = false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
+const ALL_DEBUG_ON = true; // Set to true to enable all debug categories
+const DEBUG_ENABLED = ALL_DEBUG_ON || false; // Master switch - set to false for production
+const DEBUG_STORAGE = ALL_DEBUG_ON || false; // Storage operations (load/save credentials, preferences)
+const DEBUG_RECONNECTION = ALL_DEBUG_ON ||false; // Auto-reconnection logic and app state changes  
+const DEBUG_MQTT = ALL_DEBUG_ON || false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
 
 /**
  * Centralized debug logging function with category-based filtering
@@ -615,41 +616,35 @@ export default function App() {
     // Update the UI immediately
     setRememberMe(value);
     
-    try {
-      // Save the remember me setting
-      debugLog('About to save remember me setting: ' + value + ' as string: ' + value.toString(), 'info', 'storage');
-      await storage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
-      debugLog('Saved remember me setting: ' + value, 'success', 'storage');
-      
-      // Verify it was saved correctly by reading it back
-      const verification = await storage.getItem(STORAGE_KEYS.REMEMBER_ME);
-      debugLog('Verification read back: ' + verification + ' matches expected: ' + (verification === value.toString()), 'info', 'storage');
-      
-      // If turning off remember me, we should clear credentials when user logs out
-      // We don't clear them here to avoid losing the current connection
-      if (!value) {
-        debugLog('Remember Me turned off - credentials will be cleared on logout', 'warning', 'storage');
-      } else if (username && password && isConnected) {
-        // If we're already connected and turning on remember me, save credentials now
-        debugLog('Remember Me turned on - saving current credentials', 'info', 'storage');
-        await saveCredentials(username, password);
+    // Don't save to storage immediately - only save when connection succeeds
+    // This prevents the storage from getting out of sync with the actual intention
+    
+    // If turning off remember me and we're connected, we might want to clear credentials on logout
+    if (!value) {
+      debugLog('Remember Me turned off - credentials will be cleared on logout', 'warning', 'storage');
+    } else if (username && password && isConnected) {
+      // If we're already connected and turning on remember me, save credentials now
+      debugLog('Remember Me turned on - saving current credentials', 'info', 'storage');
+      try {
+        await saveCredentials(username, password, value);
+      } catch (error) {
+        debugLog(`Failed to save credentials when toggling remember me: ${error}`, 'error', 'storage');
       }
-    } catch (error) {
-      debugLog(`Failed to update remember me preference: ${error}`, 'error', 'storage');
     }
   };
 
-  const saveCredentials = async (username: string, password: string) => {
-    debugLog('Saving credentials, remember me = ' + rememberMe, 'info', 'storage');
+  const saveCredentials = async (username: string, password: string, rememberMeValue?: boolean) => {
+    const effectiveRememberMe = rememberMeValue !== undefined ? rememberMeValue : rememberMe;
+    debugLog('Saving credentials, remember me = ' + effectiveRememberMe, 'info', 'storage');
     try {
       // Always save the remember me preference first
       const saveRememberMeSuccess = await persistToStorage(
         STORAGE_KEYS.REMEMBER_ME, 
-        rememberMe.toString(), 
+        effectiveRememberMe.toString(), 
         'Remember Me preference'
       );
       
-      if (rememberMe) {
+      if (effectiveRememberMe) {
         // Save credentials if remember me is true
         debugLog('Remember Me is ON - saving username and password', 'info', 'storage');
         
@@ -673,7 +668,13 @@ export default function App() {
           debugLog('Failed to save some credential data', 'warning', 'storage');
         }
       } else {
-        debugLog('Remember Me is OFF - credentials will be cleared on logout', 'info', 'storage');
+        debugLog('Remember Me is OFF - clearing any existing credentials', 'info', 'storage');
+        try {
+          await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
+          debugLog('Cleared credentials since Remember Me is OFF', 'success', 'storage');
+        } catch (error) {
+          debugLog(`Failed to clear credentials: ${error}`, 'error', 'storage');
+        }
       }
     } catch (error) {
       debugLog(`Failed to save credentials: ${error}`, 'error', 'storage');
@@ -785,7 +786,7 @@ export default function App() {
           const shouldSaveCredentials = (savedRememberMe !== undefined ? savedRememberMe : rememberMe) && un && pw;
           if (shouldSaveCredentials) {
             debugLog(`Connection successful - saving credentials (rememberMe: ${savedRememberMe !== undefined ? savedRememberMe : rememberMe})`, 'info', 'mqtt');
-            saveCredentials(un, pw);
+            saveCredentials(un, pw, savedRememberMe !== undefined ? savedRememberMe : rememberMe);
           } else {
             debugLog(`Connection successful - not saving credentials (rememberMe: ${savedRememberMe !== undefined ? savedRememberMe : rememberMe}, hasCredentials: ${!!(un && pw)})`, 'info', 'mqtt');
           }
