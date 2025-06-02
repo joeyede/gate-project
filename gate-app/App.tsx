@@ -27,10 +27,10 @@ import type { MqttClient } from 'precompiled-mqtt';
 // Debug Configuration
 // Set DEBUG_ENABLED to false to disable all console output in production
 // Individual category flags provide fine-grained control when DEBUG_ENABLED is true
-const DEBUG_ENABLED = true; // Master switch - set to false for production
-const DEBUG_STORAGE = true; // Storage operations (load/save credentials, preferences)
-const DEBUG_RECONNECTION = true; // Auto-reconnection logic and app state changes  
-const DEBUG_MQTT = true; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
+const DEBUG_ENABLED = false; // Master switch - set to false for production
+const DEBUG_STORAGE = false; // Storage operations (load/save credentials, preferences)
+const DEBUG_RECONNECTION = false; // Auto-reconnection logic and app state changes  
+const DEBUG_MQTT = false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
 
 /**
  * Centralized debug logging function with category-based filtering
