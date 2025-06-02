@@ -2,9 +2,58 @@ import React, { useState, useEffect, Fragment } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, TextInput, TouchableOpacity, Switch, Animated, Platform, GestureResponderEvent } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import * as appJson from './app.json';
 import * as mqtt from 'precompiled-mqtt';
 import type { MqttClient } from 'precompiled-mqtt';
+
+/**
+ * DEBUG SYSTEM DOCUMENTATION
+ * 
+ * This app uses a comprehensive debug flag system to control console output:
+ * 
+ * 1. DEBUG_ENABLED: Master switch - when false, NO console output occurs (production mode)
+ * 2. Category-specific flags (only active when DEBUG_ENABLED = true):
+ *    - DEBUG_STORAGE: Controls storage operations (load/save credentials, preferences)
+ *    - DEBUG_RECONNECTION: Controls auto-reconnection logic and app state changes
+ *    - DEBUG_MQTT: Controls MQTT operations (connection, messages, commands)
+ * 
+ * Visual Debug Panel: Only visible when DEBUG_ENABLED = true (hidden in production)
+ * 
+ * For production: Set DEBUG_ENABLED = false to hide all debug features
+ * For troubleshooting: Set DEBUG_ENABLED = true and enable specific categories as needed
+ */
+
+// Debug Configuration
+// Set DEBUG_ENABLED to false to disable all console output in production
+// Individual category flags provide fine-grained control when DEBUG_ENABLED is true
+const DEBUG_ENABLED = false; // Master switch - set to false for production
+const DEBUG_STORAGE = false; // Storage operations (load/save credentials, preferences)
+const DEBUG_RECONNECTION = false; // Auto-reconnection logic and app state changes  
+const DEBUG_MQTT = false; // MQTT operations (connection, messages, commands) - keep enabled for troubleshooting
+
+/**
+ * Centralized debug logging function with category-based filtering
+ * 
+ * Usage:
+ * - debugLog('Connection established') // General info message
+ * - debugLog('Failed to connect', 'error', 'mqtt') // MQTT error message  
+ * - debugLog('Credentials saved', 'success', 'storage') // Storage success message
+ * - debugLog('Auto-reconnecting...', 'warning', 'reconnection') // Reconnection warning
+ * 
+ * @param message - The debug message to log
+ * @param type - Message type: 'info' | 'error' | 'success' | 'warning' (default: 'info')
+ * @param category - Message category: 'general' | 'storage' | 'reconnection' | 'mqtt' (default: 'general')
+ */
+const debugLog = (message: string, type: 'info' | 'error' | 'success' | 'warning' = 'info', category: 'general' | 'storage' | 'reconnection' | 'mqtt' = 'general') => {
+  if (!DEBUG_ENABLED) return;
+  if (category === 'storage' && !DEBUG_STORAGE) return;
+  if (category === 'reconnection' && !DEBUG_RECONNECTION) return;
+  if (category === 'mqtt' && !DEBUG_MQTT) return;
+  
+  const prefix = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : type === 'success' ? '✅' : 'ℹ️';
+  console.log(`${prefix} ${message}`);
+};
 
 // Extend the global Window interface for debug functions
 declare global {
@@ -21,39 +70,39 @@ const storage = {
   async getItem(key: string): Promise<string | null> {
     try {
       const value = await AsyncStorage.getItem(key);
-      console.log(`Storage.getItem: ${key} = ${value !== null ? JSON.stringify(value) : 'null'} (type: ${typeof value})`);
+      debugLog(`Storage.getItem: ${key} = ${value !== null ? JSON.stringify(value) : 'null'} (type: ${typeof value})`, 'info', 'storage');
       return value;
     } catch (error) {
-      console.error(`Error getting item ${key}:`, error);
+      debugLog(`Error getting item ${key}: ${error}`, 'error', 'storage');
       return null;
     }
   },
   async setItem(key: string, value: string): Promise<void> {
     try {
-      console.log(`Storage.setItem: ${key} = ${JSON.stringify(value)} (type: ${typeof value})`);
+      debugLog(`Storage.setItem: ${key} = ${JSON.stringify(value)} (type: ${typeof value})`, 'info', 'storage');
       await AsyncStorage.setItem(key, value);
-      console.log(`Storage.setItem completed for ${key}`);
+      debugLog(`Storage.setItem completed for ${key}`, 'success', 'storage');
     } catch (error) {
-      console.error(`Error setting item ${key}:`, error);
+      debugLog(`Error setting item ${key}: ${error}`, 'error', 'storage');
     }
   },
   async multiRemove(keys: string[]): Promise<void> {
     try {
-      console.log(`Storage.multiRemove: ${keys.join(', ')}`);
+      debugLog(`Storage.multiRemove: ${keys.join(', ')}`, 'info', 'storage');
       await AsyncStorage.multiRemove(keys);
-      console.log(`Storage.multiRemove completed for: ${keys.join(', ')}`);
+      debugLog(`Storage.multiRemove completed for: ${keys.join(', ')}`, 'success', 'storage');
     } catch (error) {
-      console.error(`Error removing items ${keys.join(', ')}:`, error);
+      debugLog(`Error removing items ${keys.join(', ')}: ${error}`, 'error', 'storage');
     }
   },
   // Debug function to see all stored values
   async getAllKeys(): Promise<readonly string[]> {
     try {
       const keys = await AsyncStorage.getAllKeys();
-      console.log('All AsyncStorage keys:', keys);
+      debugLog('All AsyncStorage keys: ' + keys.join(', '), 'info', 'storage');
       return keys;
     } catch (error) {
-      console.error('Error getting all keys:', error);
+      debugLog(`Error getting all keys: ${error}`, 'error', 'storage');
       return [];
     }
   },
@@ -66,14 +115,14 @@ const storage = {
         key === STORAGE_KEYS.PASSWORD
       );
       
-      console.log('=== STORAGE DEBUG ===');
+      debugLog('=== STORAGE DEBUG ===', 'info', 'storage');
       for (const key of relevantKeys) {
         const value = await this.getItem(key);
-        console.log(`${key}: ${JSON.stringify(value)}`);
+        debugLog(`${key}: ${JSON.stringify(value)}`, 'info', 'storage');
       }
-      console.log('=== END STORAGE DEBUG ===');
+      debugLog('=== END STORAGE DEBUG ===', 'info', 'storage');
     } catch (error) {
-      console.error('Error debugging storage:', error);
+      debugLog(`Error debugging storage: ${error}`, 'error', 'storage');
     }
   }
 };
@@ -106,6 +155,69 @@ export default function App() {
   const [isInsideView, setIsInsideView] = useState(true); // Default to inside view
   const [isInitializing, setIsInitializing] = useState(true); // Track initialization state
   const [isAutoReconnecting, setIsAutoReconnecting] = useState(false); // Track auto-reconnection attempts
+  const [forceRenderKey, setForceRenderKey] = useState(0); // Force re-renders on mobile
+  const [showDebugPanel, setShowDebugPanel] = useState(false); // Toggle debug panel
+  const [debugLogs, setDebugLogs] = useState<Array<{timestamp: string, message: string, type: 'info' | 'error' | 'success' | 'warning'}>>([]);
+
+  /**
+   * Visual debug panel logger - always adds to the visual debug panel
+   * Also logs to console if debug flags are enabled
+   * 
+   * @param message - The debug message to display
+   * @param type - Message type for visual styling and console logging
+   */
+  const addToDebugPanel = (message: string, type: 'info' | 'error' | 'success' | 'warning' = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    debugLog(`[${timestamp}] ${message}`, type); // Console logging controlled by debug flags
+    
+    setDebugLogs(prev => {
+      const newLog = { timestamp, message, type };
+      const updated = [newLog, ...prev.slice(0, 49)]; // Keep last 50 logs
+      return updated;
+    });
+  };
+
+  // Helper function to get color for log types
+  const getLogColor = (type: 'info' | 'error' | 'success' | 'warning') => {
+    switch (type) {
+      case 'error': return '#ff6b6b';
+      case 'success': return '#51cf66';
+      case 'warning': return '#ffd43b';
+      default: return '#ffffff';
+    }
+  };
+
+  // Debug logging for isAutoReconnecting changes
+  useEffect(() => {
+    const message = `🔄 isAutoReconnecting changed to: ${isAutoReconnecting}`;
+    debugLog(message, isAutoReconnecting ? 'warning' : 'info');
+    addToDebugPanel(message, isAutoReconnecting ? 'warning' : 'info');
+  }, [isAutoReconnecting]);
+
+  // Debug logging for connection state changes
+  useEffect(() => {
+    const message = `🔗 isConnected changed to: ${isConnected} at ${new Date().toISOString()}`;
+    debugLog(message, isConnected ? 'success' : 'error');
+    addToDebugPanel(message, isConnected ? 'success' : 'error');
+  }, [isConnected]);
+
+  // Debug logging for client changes
+  useEffect(() => {
+    const message = `🔌 client changed to: ${client ? 'EXISTS' : 'NULL'} at ${new Date().toISOString()}`;
+    debugLog(message, client ? 'success' : 'info');
+    addToDebugPanel(message, client ? 'success' : 'info');
+    if (client) {
+      const clientMsg = `🔌 Client state: Connected = ${!!client && isConnected}`;
+      debugLog(clientMsg, 'info');
+      addToDebugPanel(clientMsg, 'info');
+    }
+  }, [client]);
+
+  // Force render function for mobile
+  const forceRender = () => {
+    debugLog('🔄 Forcing re-render...', 'info');
+    setForceRenderKey(prev => prev + 1);
+  };
 
   // Fix viewport on web, especially for iPhone
   useEffect(() => {
@@ -169,66 +281,103 @@ export default function App() {
     }
   }, [isConnected]);
 
+  // Monitor page visibility to understand app lifecycle
+  useEffect(() => {
+    const logVisibilityState = () => {
+      const message = `📄 Page visibility: ${document.hidden ? 'hidden' : 'visible'}, isConnected: ${isConnected}, hasClient: ${!!client}`;
+      debugLog(message, 'info');
+    };
+
+    // Log initial state
+    logVisibilityState();
+
+    // Monitor visibility changes
+    document.addEventListener('visibilitychange', logVisibilityState);
+
+    return () => {
+      document.removeEventListener('visibilitychange', logVisibilityState);
+    };
+  }, [isConnected, client, isInitializing, isAutoReconnecting]);
+
   // Handle app visibility changes (when user switches away and back)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      console.log('Visibility changed:', document.hidden ? 'hidden' : 'visible');
+      const visMsg = `🖥️ Visibility changed: ${document.hidden ? 'hidden' : 'visible'} at ${new Date().toISOString()}`;
+      debugLog(visMsg, 'info', 'reconnection');
+      addToDebugPanel(visMsg, 'info');
+      
+      const stateMsg = `🖥️ Connection state: connected=${isConnected}, hasClient=${!!client}, init=${isInitializing}`;
+      debugLog(stateMsg, 'info', 'reconnection');
+      addToDebugPanel(stateMsg, 'info');
       
       if (!document.hidden && !isInitializing) {
         // App became visible again
-        console.log('App became visible. Current state:', {
-          isConnected,
-          hasUsername: !!username,
-          hasPassword: !!password,
-          rememberMe,
-          hasClient: !!client
-        });
+        const visibleMsg = `App became visible - checking reconnection conditions`;
+        debugLog(visibleMsg, 'warning', 'reconnection');
+        addToDebugPanel(visibleMsg, 'warning');
         
-        // Check if we have credentials but lost connection
-        if (!isConnected && username && password && rememberMe) {
-          console.log('Detected lost connection with saved credentials - attempting reconnect');
+        // Check if we have credentials - attempt reconnect regardless of current connection state
+        // because the connection often closes right after visibility change
+        if (username && password && rememberMe && !isAutoReconnecting) {
+          const reconnectMsg = `🔗 Visibility change: App became visible with credentials - attempting reconnect`;
+          debugLog(reconnectMsg, 'warning', 'reconnection');
+          addToDebugPanel(reconnectMsg, 'warning');
+          
           setIsAutoReconnecting(true);
           setStatus('Reconnecting...');
           
           // Set a timeout to clear auto-reconnecting state if connection takes too long
           const timeoutId = setTimeout(() => {
-            console.log('Auto-reconnection timeout - clearing auto-reconnecting state');
+            const timeoutMsg = '🔗 Auto-reconnection timeout - clearing auto-reconnecting state';
+            debugLog(timeoutMsg, 'error', 'reconnection');
+            addToDebugPanel(timeoutMsg, 'error');
             setIsAutoReconnecting(false);
           }, 10000); // 10 second timeout
           
-          setTimeout(() => {
-            connectToMqtt(username, password).finally(() => {
-              // Clear the timeout since connection attempt completed
-              clearTimeout(timeoutId);
-            });
-          }, 500); // Small delay to ensure app is fully active
+          // Start connection immediately without delay
+          connectToMqtt(username, password).finally(() => {
+            // Clear the timeout since connection attempt completed
+            clearTimeout(timeoutId);
+          });
+        } else {
+          const skipMsg = `🔗 Visibility change: Skipping reconnect - conditions not met (hasCredentials: ${!!(username && password)}, rememberMe: ${rememberMe}, isAutoReconnecting: ${isAutoReconnecting})`;
+          debugLog(skipMsg, 'info', 'reconnection');
+          addToDebugPanel(skipMsg, 'info');
         }
       }
     };
 
     const handleFocus = () => {
-      console.log('Window gained focus');
-      // Small delay before checking, as visibility change usually fires first
-      setTimeout(() => {
-        if (!document.hidden && !isConnected && username && password && rememberMe && !isInitializing) {
-          console.log('Focus event: attempting reconnect with saved credentials');
+      const focusMsg = 'Window gained focus';
+      debugLog(focusMsg, 'info', 'reconnection');
+      addToDebugPanel(focusMsg, 'info');
+      
+      // Check immediately without delay
+      if (!document.hidden && !isConnected && username && password && rememberMe && !isInitializing) {
+          const attemptMsg = '🎯 Focus event: attempting reconnect with saved credentials';
+          debugLog(attemptMsg, 'warning', 'reconnection');
+          addToDebugPanel(attemptMsg, 'warning');
           setIsAutoReconnecting(true);
           setStatus('Reconnecting...');
           
           // Set a timeout to clear auto-reconnecting state if connection takes too long
           const timeoutId = setTimeout(() => {
-            console.log('Auto-reconnection timeout - clearing auto-reconnecting state');
+            const timeoutMsg = '🎯 Auto-reconnection timeout - clearing auto-reconnecting state';
+            debugLog(timeoutMsg, 'error', 'reconnection');
+            addToDebugPanel(timeoutMsg, 'error');
             setIsAutoReconnecting(false);
           }, 10000); // 10 second timeout
           
-          setTimeout(() => {
-            connectToMqtt(username, password).finally(() => {
-              // Clear the timeout since connection attempt completed
-              clearTimeout(timeoutId);
-            });
-          }, 500);
+          // Start connection immediately without delay
+          connectToMqtt(username, password).finally(() => {
+            // Clear the timeout since connection attempt completed
+            clearTimeout(timeoutId);
+          });
+        } else {
+          const skipFocusMsg = `🎯 Focus event: Skipping reconnect - conditions not met (hidden: ${document.hidden}, connected: ${isConnected}, hasCredentials: ${!!(username && password)}, rememberMe: ${rememberMe}, initializing: ${isInitializing})`;
+          debugLog(skipFocusMsg, 'info', 'reconnection');
+          addToDebugPanel(skipFocusMsg, 'info');
         }
-      }, 1000);
     };
 
     if (Platform.OS === 'web') {
@@ -242,40 +391,78 @@ export default function App() {
       const { AppState } = require('react-native');
       
       const handleAppStateChange = (nextAppState: string) => {
-        console.log('App state changed to:', nextAppState);
+        const stateMsg = `📱 App state changed to: ${nextAppState}`;
+        debugLog(stateMsg, 'info', 'reconnection');
+        addToDebugPanel(stateMsg, 'info');
         
         if (nextAppState === 'active' && !isInitializing) {
-          // App became active again
-          console.log('App became active. Current state:', {
-            isConnected,
-            hasUsername: !!username,
-            hasPassword: !!password,
-            rememberMe,
-            hasClient: !!client
-          });
+          const activeMsg = '📱 App became active - checking reconnection conditions';
+          debugLog(activeMsg, 'warning', 'reconnection');
+          addToDebugPanel(activeMsg, 'warning');
           
-          // Check if we have credentials but lost connection
-          if (!isConnected && username && password && rememberMe) {
-            console.log('Detected lost connection with saved credentials - attempting reconnect');
-            setIsAutoReconnecting(true);
-            setStatus('Reconnecting...');
+          // Check if we have credentials - attempt reconnect regardless of current connection state
+          // because the connection often closes right after app becomes active
+          if (username && password && rememberMe && !isAutoReconnecting) {
+            const reconnectMsg = '📱 ✅ All conditions met - attempting reconnect';
+            debugLog(reconnectMsg, 'warning', 'reconnection');
+            addToDebugPanel(reconnectMsg, 'warning');
+            
+            // Use functional state updates to ensure we have the latest state
+            setIsAutoReconnecting(prevState => {
+              const funcMsg = `📱 isAutoReconnecting functional update, prev: ${prevState}, new: true`;
+              debugLog(funcMsg, 'info', 'reconnection');
+              addToDebugPanel(funcMsg, 'info');
+              return true;
+            });
+            
+            setStatus(prevStatus => {
+              const statusMsg = `📱 status functional update, prev: ${prevStatus}, new: Reconnecting...`;
+              debugLog(statusMsg, 'info', 'reconnection');
+              addToDebugPanel(statusMsg, 'info');
+              return 'Reconnecting...';
+            });
+            
+            // Force a re-render by updating multiple states
+            const renderMsg = '📱 States updated, forcing re-render and starting connection...';
+            debugLog(renderMsg, 'info', 'reconnection');
+            addToDebugPanel(renderMsg, 'info');
+            forceRender(); // Force re-render on mobile
+            
+            // Additional immediate update to ensure UI reflects the change
+            setTimeout(() => {
+              const additionalMsg = '📱 Additional state update to ensure UI reflects change';
+              debugLog(additionalMsg, 'info', 'reconnection');
+              addToDebugPanel(additionalMsg, 'info');
+              setIsAutoReconnecting(true);
+              forceRender();
+            }, 0);
             
             // Set a timeout to clear auto-reconnecting state if connection takes too long
             const timeoutId = setTimeout(() => {
-              console.log('Auto-reconnection timeout - clearing auto-reconnecting state');
+              const timeoutMsg = '📱 Auto-reconnection timeout - clearing auto-reconnecting state';
+              debugLog(timeoutMsg, 'error', 'reconnection');
+              addToDebugPanel(timeoutMsg, 'error');
               setIsAutoReconnecting(false);
             }, 10000); // 10 second timeout
             
-            setTimeout(() => {
-              connectToMqtt(username, password).finally(() => {
-                // Clear the timeout since connection attempt completed
-                clearTimeout(timeoutId);
-              });
-            }, 500);
+            // Start connection immediately without delay
+            connectToMqtt(username, password).finally(() => {
+              // Clear the timeout since connection attempt completed
+              clearTimeout(timeoutId);
+            });
+          } else {
+            const skipAppMsg = `📱 ❌ Not attempting reconnect - conditions not met (hasCredentials: ${!!(username && password)}, rememberMe: ${rememberMe}, isAutoReconnecting: ${isAutoReconnecting})`;
+            debugLog(skipAppMsg, 'info', 'reconnection');
+            addToDebugPanel(skipAppMsg, 'info');
           }
+        } else {
+          const skipStateMsg = `📱 Not processing app state change - nextState: ${nextAppState}, isInitializing: ${isInitializing}`;
+          debugLog(skipStateMsg, 'info', 'reconnection');
+          addToDebugPanel(skipStateMsg, 'info');
         }
       };
       
+      debugLog('📱 Setting up AppState listener...', 'info', 'reconnection');
       appStateSubscription = AppState.addEventListener('change', handleAppStateChange);
     }
     
@@ -291,12 +478,38 @@ export default function App() {
 
   useEffect(() => {
     if (__DEV__) {
-      console.log('App initialized, loading saved preferences');
+      debugLog('🚀 App initialized, loading saved preferences', 'info');
     }
     
     // Debug storage state first, then load preferences and set initialization complete
     storage.debugStorage().then(() => {
-      loadSavedPreferences().finally(() => {
+      debugLog('🚀 About to load saved preferences...', 'info');
+      loadSavedPreferences().then((result) => {
+        debugLog('🚀 Load preferences completed, result: ' + JSON.stringify(result), 'info');
+        
+        if (result.willAutoReconnect && result.username && result.password) {
+          // We're starting auto-reconnection, finish initialization immediately so reconnecting screen shows
+          debugLog('🚀 Starting auto-reconnection with saved credentials: ' + result.username, 'info');
+          debugLog('🚀 Setting isInitializing to false...', 'info');
+          setIsInitializing(false); // Set this immediately so render shows reconnecting screen
+          debugLog('🚀 isInitializing set to false, isAutoReconnecting should be true', 'info');
+          
+          // Force a render to ensure UI updates
+          forceRender();
+          
+          // Start connection with a delay to ensure state updates have taken effect
+          debugLog('🚀 Starting connection in 500ms...', 'info');
+          setTimeout(() => {
+            debugLog('🚀 Now calling connectToMqtt with credentials', 'info');
+            connectToMqtt(result.username, result.password);
+          }, 500); // Increased delay to ensure UI shows
+        } else {
+          // No auto-reconnection, just finish initialization
+          debugLog('🚀 No auto-reconnection, finishing initialization', 'info');
+          setIsInitializing(false);
+        }
+      }).catch((error) => {
+        debugLog(`🚀 Error loading preferences: ${error}`, 'error');
         setIsInitializing(false);
       });
     });
@@ -330,7 +543,7 @@ export default function App() {
   };
 
   const loadSavedPreferences = async () => {
-    console.log('Loading saved preferences...');
+    debugLog('Loading saved preferences...', 'info', 'storage');
     try {
       // Get ALL storage values for debugging
       const allValues = await Promise.all([
@@ -341,95 +554,87 @@ export default function App() {
       
       const [savedRememberMe, savedUsername, savedPassword] = allValues;
       
-      console.log('Raw storage values retrieved:', {
-        REMEMBER_ME: savedRememberMe,
-        USERNAME: savedUsername ? '***SET***' : null,
-        PASSWORD: savedPassword ? '***SET***' : null
-      });
+      debugLog('Raw storage values retrieved: REMEMBER_ME=' + JSON.stringify(savedRememberMe) + ', hasUsername=' + !!savedUsername + ', hasPassword=' + !!savedPassword, 'info', 'storage');
       
       // Default to false if not found or invalid
       const shouldRemember = savedRememberMe === 'true';
-      console.log('Boolean conversion - savedRememberMe:', JSON.stringify(savedRememberMe), '-> shouldRemember:', shouldRemember);
+      debugLog('Boolean conversion - savedRememberMe: ' + JSON.stringify(savedRememberMe) + ' -> shouldRemember: ' + shouldRemember, 'info', 'storage');
       
-      console.log('Setting remember me to:', shouldRemember);
+      debugLog('Setting remember me to: ' + shouldRemember, 'info', 'storage');
       setRememberMe(shouldRemember);
       
-      console.log('Loaded from storage:', {
-        rememberMe: shouldRemember,
-        hasUsername: !!savedUsername,
-        hasPassword: !!savedPassword
-      });
+      debugLog('Loaded from storage: rememberMe=' + shouldRemember + ', hasUsername=' + !!savedUsername + ', hasPassword=' + !!savedPassword, 'info', 'storage');
       
       // Check for inconsistent state and fix it
       if (shouldRemember === false && (savedUsername || savedPassword)) {
-        console.warn('Found inconsistent state: Remember Me is OFF but credentials exist. Fixing...');
-        console.warn('State details:', {
-          shouldRemember,
-          savedRememberMe,
-          hasUsername: !!savedUsername,
-          hasPassword: !!savedPassword
-        });
+        debugLog('Found inconsistent state: Remember Me is OFF but credentials exist. Fixing...', 'warning', 'storage');
+        debugLog(`State details: shouldRemember=${shouldRemember}, savedRememberMe=${savedRememberMe}, hasUsername=${!!savedUsername}, hasPassword=${!!savedPassword}`, 'warning', 'storage');
         try {
           await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD]);
-          console.log('Cleared inconsistent credentials');
+          debugLog('Cleared inconsistent credentials', 'warning', 'storage');
         } catch (e) {
-          console.error('Failed to clear inconsistent credentials:', e);
+          debugLog(`Failed to clear inconsistent credentials: ${e}`, 'error', 'storage');
         }
       } else if (savedUsername && savedPassword) {
         // We have credentials, use them
-        console.log('Setting saved username and password');
+        debugLog('Setting saved username and password', 'info', 'storage');
         setUsername(savedUsername);
         setPassword(savedPassword);
         
         // Only auto-connect if remember me was true
         if (shouldRemember) {
-          console.log('Auto-connecting with saved credentials');
-          setIsConnected(true); // Set connected state immediately to avoid login screen flash
+          debugLog('Auto-connecting with saved credentials', 'info', 'reconnection');
+          setIsAutoReconnecting(true); // Use auto-reconnecting state instead of setting connected immediately
           setStatus('Connecting...');
-          // Small delay to ensure state is updated
-          setTimeout(() => connectToMqtt(savedUsername, savedPassword), 100);
+          
+          // Return the credentials to use for connection
+          return { willAutoReconnect: true, username: savedUsername, password: savedPassword };
         } else {
-          console.log('Found credentials but remember me is false, not auto-connecting');
+          debugLog('Found credentials but remember me is false, not auto-connecting', 'info');
         }
       } else {
-        console.log('No saved credentials found');
+        debugLog('No saved credentials found', 'info', 'storage');
       }
+      
+      // Return false if we're not auto-connecting
+      return { willAutoReconnect: false };
     } catch (error) {
-      console.error('Failed to load preferences:', error);
+      debugLog(`Failed to load preferences: ${error}`, 'error');
+      return { willAutoReconnect: false };
     }
   };
 
   const handleRememberMeToggle = async (value: boolean) => {
-    console.log('Remember Me toggle changed to:', value);
+    debugLog('Remember Me toggle changed to: ' + value, 'info', 'storage');
     // Update the UI immediately
     setRememberMe(value);
     
     try {
       // Save the remember me setting
-      console.log('About to save remember me setting:', value, 'as string:', value.toString());
+      debugLog('About to save remember me setting: ' + value + ' as string: ' + value.toString(), 'info', 'storage');
       await storage.setItem(STORAGE_KEYS.REMEMBER_ME, value.toString());
-      console.log('Saved remember me setting:', value);
+      debugLog('Saved remember me setting: ' + value, 'success', 'storage');
       
       // Verify it was saved correctly by reading it back
       const verification = await storage.getItem(STORAGE_KEYS.REMEMBER_ME);
-      console.log('Verification read back:', verification, 'matches expected:', verification === value.toString());
+      debugLog('Verification read back: ' + verification + ' matches expected: ' + (verification === value.toString()), 'info', 'storage');
       
       // If turning off remember me, we should clear credentials when user logs out
       // We don't clear them here to avoid losing the current connection
       if (!value) {
-        console.log('Remember Me turned off - credentials will be cleared on logout');
+        debugLog('Remember Me turned off - credentials will be cleared on logout', 'warning', 'storage');
       } else if (username && password && isConnected) {
         // If we're already connected and turning on remember me, save credentials now
-        console.log('Remember Me turned on - saving current credentials');
+        debugLog('Remember Me turned on - saving current credentials', 'info', 'storage');
         await saveCredentials(username, password);
       }
     } catch (error) {
-      console.error('Failed to update remember me preference:', error);
+      debugLog(`Failed to update remember me preference: ${error}`, 'error', 'storage');
     }
   };
 
   const saveCredentials = async (username: string, password: string) => {
-    console.log('Saving credentials, remember me =', rememberMe);
+    debugLog('Saving credentials, remember me = ' + rememberMe, 'info', 'storage');
     try {
       // Always save the remember me preference first
       const saveRememberMeSuccess = await persistToStorage(
@@ -440,7 +645,7 @@ export default function App() {
       
       if (rememberMe) {
         // Save credentials if remember me is true
-        console.log('Remember Me is ON - saving username and password');
+        debugLog('Remember Me is ON - saving username and password', 'info', 'storage');
         
         // Save username
         const usernameSuccess = await persistToStorage(
@@ -457,15 +662,15 @@ export default function App() {
         );
         
         if (usernameSuccess && passwordSuccess) {
-          console.log('Credentials successfully saved to storage');
+          debugLog('Credentials successfully saved to storage', 'success', 'storage');
         } else {
-          console.warn('Failed to save some credential data');
+          debugLog('Failed to save some credential data', 'warning', 'storage');
         }
       } else {
-        console.log('Remember Me is OFF - credentials will be cleared on logout');
+        debugLog('Remember Me is OFF - credentials will be cleared on logout', 'info', 'storage');
       }
     } catch (error) {
-      console.error('Failed to save credentials:', error);
+      debugLog(`Failed to save credentials: ${error}`, 'error', 'storage');
     }
   };
 
@@ -483,11 +688,11 @@ export default function App() {
 
       // Clean up existing client if it exists
       if (client) {
-        console.log('Cleaning up existing client');
+        debugLog('Cleaning up existing client', 'info', 'mqtt');
         try {
           client.end(true);
         } catch (e) {
-          console.log('Error cleaning up old client:', e);
+          debugLog(`Error cleaning up old client: ${e}`, 'warning', 'mqtt');
         }
         setClient(null);
       }
@@ -496,7 +701,7 @@ export default function App() {
         const clientId = 'gate_app_' + Math.random().toString(16).substr(2, 8);
         const connectUrl = 'wss://3b62666a86a14b23956244c4308bad76.s1.eu.hivemq.cloud:8884/mqtt';
         
-        console.log('Creating new MQTT connection...');
+        debugLog('Creating new MQTT connection...', 'info', 'mqtt');
         setStatus('Connecting...');
         
         const mqttClient = mqtt.connect(connectUrl, {
@@ -528,7 +733,9 @@ export default function App() {
         });
 
         mqttClient.on('connect', () => {
-          console.log('Connected to MQTT');
+          const connectMsg = 'Connected to MQTT';
+          debugLog(connectMsg, 'success', 'mqtt');
+          addToDebugPanel(connectMsg, 'success');
           setStatus('Connected');
           setIsConnected(true);
           setIsAutoReconnecting(false); // Clear auto-reconnection state
@@ -545,7 +752,7 @@ export default function App() {
             }
           }, (err) => {
             if (err) {
-              console.error('Subscribe error:', err);
+              debugLog(`Subscribe error for gate/status: ${err}`, 'error', 'mqtt');
             }
           });
 
@@ -559,7 +766,7 @@ export default function App() {
             }
           }, (err) => {
             if (err) {
-              console.error('Subscribe error:', err);
+              debugLog(`Subscribe error for gate/responses/#: ${err}`, 'error', 'mqtt');
             }
           });
 
@@ -573,14 +780,14 @@ export default function App() {
             // This is a manual login, save the credentials
             saveCredentials(un, pw);
           } else {
-            console.log('Auto-connect successful - not re-saving already saved credentials');
+            debugLog('Auto-connect successful - not re-saving already saved credentials', 'info', 'mqtt');
           }
           showNotification('Connected successfully');
           resolve(); // Connection successful
         });
 
         mqttClient.on('message', (topic, payload, packet) => {
-          console.log('Message received:', topic, payload.toString(), packet);
+          debugLog(`Message received: ${topic} - ${payload.toString()}`, 'info', 'mqtt');
           if (topic.startsWith('gate/responses/')) {
               try {
                   const data = JSON.parse(payload.toString());
@@ -595,13 +802,15 @@ export default function App() {
                       }
                   }
               } catch (error) {
-                  console.error('Error parsing response:', error);
+                  debugLog(`Error parsing response: ${error}`, 'error', 'mqtt');
               }
           }
         });
 
         mqttClient.on('error', (err) => {
-          console.error('MQTT Error:', err);
+          const errorMsg = `MQTT Error: ${err.message}`;
+          debugLog(errorMsg, 'error', 'mqtt');
+          addToDebugPanel(errorMsg, 'error');
           let userFriendlyMessage = 'Connection failed';
           if (err.message?.includes('not authorized')) {
             userFriendlyMessage = 'Connection failed: Invalid username or password';
@@ -614,14 +823,20 @@ export default function App() {
         });
 
         mqttClient.on('close', () => {
-          console.log('Connection closed');
+          const closeMsg = `🔌 MQTT Connection closed at ${new Date().toISOString()}`;
+          debugLog(closeMsg, 'warning', 'mqtt');
+          addToDebugPanel(closeMsg, 'warning');
+          const visibilityMsg = `🔌 App visibility state: ${document.hidden ? 'hidden' : 'visible'}`;
+          debugLog(visibilityMsg, 'info', 'mqtt');
+          addToDebugPanel(visibilityMsg, 'info');
           setStatus('Disconnected');
           setIsConnected(false);
           setIsAutoReconnecting(false); // Clear auto-reconnection state
         });
 
       } catch (error) {
-        console.error('Setup error:', error);
+        debugLog(`Setup error: ${error}`, 'error', 'mqtt');
+        addToDebugPanel(`Setup error: ${error}`, 'error');
         setStatus('Setup Error: ' + (error instanceof Error ? error.message : String(error)));
         setIsAutoReconnecting(false); // Clear auto-reconnection state on setup error
         reject(error); // Setup failed
@@ -649,7 +864,7 @@ export default function App() {
     }
 
     // Debug logging
-    console.log(`Sending command - Button: ${action}, View: ${isInsideView ? 'Inside' : 'Outside'}, Actual: ${actualAction}`);
+    debugLog(`Sending command - Button: ${action}, View: ${isInsideView ? 'Inside' : 'Outside'}, Actual: ${actualAction}`, 'info', 'mqtt');
 
     setLoadingButton(action);
     setStatusDotColor('#FFC107'); // Yellow during send
@@ -658,7 +873,7 @@ export default function App() {
       pendingCommands.set(correlationId, action);
 
       const payload = JSON.stringify({ action: actualAction });
-      console.log(`Publishing to gate/control: ${payload}`);
+      debugLog(`Publishing to gate/control: ${payload}`, 'info', 'mqtt');
 
       client.publish('gate/control', 
         payload, 
@@ -676,20 +891,22 @@ export default function App() {
         }, 
         (error) => {
           if (error) {
-            console.error('Send command error:', error);
+            debugLog(`Send command error: ${error}`, 'error', 'mqtt');
+            addToDebugPanel(`Send command error: ${error}`, 'error');
             setStatus(`Error: ${error.message}`);
             showNotification('Failed to send command');
             pendingCommands.delete(correlationId);
             setStatusDotColor('#f44336'); // Red on failure
           } else {
             setStatus(`Sent: ${action} (${actualAction})`);
-            console.log(`Command sent successfully: ${action} -> ${actualAction}`);
+            debugLog(`Command sent successfully: ${action} -> ${actualAction}`, 'success', 'mqtt');
           }
           setLoadingButton(null);
         }
       );
     } catch (error) {
-      console.error('Send command error:', error);
+      debugLog(`Send command error: ${error}`, 'error', 'mqtt');
+      addToDebugPanel(`Send command error: ${error}`, 'error');
       setStatus(`Error: ${error instanceof Error ? error.message : String(error)}`);
       showNotification('Failed to send command');
       setStatusDotColor('#f44336'); // Red on failure
@@ -711,13 +928,13 @@ export default function App() {
         showNotification('Logged out successfully');
 
         try {
-          console.log('Logging out - clearing all credentials and remember me setting');
+          debugLog('Logging out - clearing all credentials and remember me setting', 'info');
           await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD, STORAGE_KEYS.REMEMBER_ME]);
           setUsername('');
           setPassword('');
           setRememberMe(false);
         } catch (error) {
-          console.error('Failed to clear credentials during logout:', error);
+          debugLog(`Failed to clear credentials during logout: ${error}`, 'error');
         }
       });
     }
@@ -735,12 +952,33 @@ export default function App() {
 
   const handleSubmit = () => {
     if (username && password) {
-      connectToMqtt();
+      // Set auto-reconnecting state to show visual feedback during connection
+      setIsAutoReconnecting(true);
+      setStatus('Connecting...');
+      
+      // Set a timeout to clear auto-reconnecting state if connection takes too long
+      const timeoutId = setTimeout(() => {
+        debugLog('Connection timeout - clearing auto-reconnecting state', 'warning');
+        setIsAutoReconnecting(false);
+      }, 10000); // 10 second timeout
+      
+      connectToMqtt().finally(() => {
+        // Clear the timeout since connection attempt completed
+        clearTimeout(timeoutId);
+      });
     }
   };
 
   const renderLoginScreen = () => (
     <View style={styles.container}>
+      {DEBUG_ENABLED && (
+        <TouchableOpacity 
+          style={[styles.debugCloseButton, { top: 40, right: 20, backgroundColor: 'rgba(0, 123, 255, 0.2)' }]}
+          onPress={() => setShowDebugPanel(!showDebugPanel)}
+        >
+          <MaterialIcons name="bug-report" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      )}
       <Text style={styles.title}>Gate Control</Text>
       <Text style={styles.version}>v{appJson.expo.version}</Text>
       <Text style={[styles.status, status.includes('Error') && styles.error]}>{status}</Text>
@@ -812,6 +1050,13 @@ export default function App() {
           {...handleTouch(handleLogout)}>
           <MaterialIcons name="logout" size={24} color="#007AFF" />
         </TouchableOpacity>
+        {DEBUG_ENABLED && (
+          <TouchableOpacity 
+            style={styles.logoutButton}
+            {...handleTouch(() => setShowDebugPanel(!showDebugPanel))}>
+            <MaterialIcons name="bug-report" size={24} color="#007AFF" />
+          </TouchableOpacity>
+        )}
       </View>
       <View style={styles.stableContainer}>
         <View style={styles.gridContainer}>
@@ -832,33 +1077,67 @@ export default function App() {
                 <Text style={styles.buttonText}>Full Open</Text>
               </TouchableOpacity>
             </View>
-            <View style={styles.row}>
-              <TouchableOpacity 
-                style={[styles.gridButton, loadingButton === 'left' && styles.buttonDisabled]} 
-                disabled={loadingButton !== null || !client}
-                {...handleTouch(() => sendCommand('left'))}>
-                <MaterialIcons name="arrow-back" size={32} color="white" />
-                <Text style={styles.buttonText}>Left</Text>
-                <MaterialIcons 
-                  name={isInsideView ? "home" : "park"} 
-                  size={16} 
-                  color="rgba(255, 255, 255, 0.7)" 
-                  style={styles.buttonIndicator}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.gridButton, loadingButton === 'right' && styles.buttonDisabled]} 
-                disabled={loadingButton !== null || !client}
-                {...handleTouch(() => sendCommand('right'))}>
-                <MaterialIcons name="arrow-forward" size={32} color="white" />
-                <Text style={styles.buttonText}>Right</Text>
-                <MaterialIcons 
-                  name={isInsideView ? "home" : "park"} 
-                  size={16} 
-                  color="rgba(255, 255, 255, 0.7)" 
-                  style={styles.buttonIndicator}
-                />
-              </TouchableOpacity>
+            
+            {/* Grouped Left/Right buttons with view toggle */}
+            <View style={styles.directionControlGroup}>
+              <View style={styles.row}>
+                <TouchableOpacity 
+                  style={[styles.gridButton, loadingButton === 'left' && styles.buttonDisabled]} 
+                  disabled={loadingButton !== null || !client}
+                  {...handleTouch(() => sendCommand('left'))}>
+                  <MaterialIcons name="arrow-back" size={32} color="white" />
+                  <Text style={styles.buttonText}>Left</Text>
+                  <MaterialIcons 
+                    name={isInsideView ? "home" : "park"} 
+                    size={16} 
+                    color="rgba(255, 255, 255, 0.7)" 
+                    style={styles.buttonIndicator}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.gridButton, loadingButton === 'right' && styles.buttonDisabled]} 
+                  disabled={loadingButton !== null || !client}
+                  {...handleTouch(() => sendCommand('right'))}>
+                  <MaterialIcons name="arrow-forward" size={32} color="white" />
+                  <Text style={styles.buttonText}>Right</Text>
+                  <MaterialIcons 
+                    name={isInsideView ? "home" : "park"} 
+                    size={16} 
+                    color="rgba(255, 255, 255, 0.7)" 
+                    style={styles.buttonIndicator}
+                  />
+                </TouchableOpacity>
+              </View>
+              
+              {/* View Toggle grouped with direction buttons */}
+              <View style={styles.groupedViewToggle}>
+                <View style={styles.viewToggleSeparator} />
+                <View style={styles.viewToggleContent}>
+                  <MaterialIcons 
+                    name="home" 
+                    size={24} 
+                    color={isInsideView ? "#007AFF" : "#666"} 
+                  />
+                  <Text style={[styles.viewToggleLabel, { color: isInsideView ? "#007AFF" : "#666" }]}>
+                    Inside
+                  </Text>
+                  <Switch
+                    value={!isInsideView}
+                    onValueChange={(value) => setIsInsideView(!value)}
+                    trackColor={{ false: '#767577', true: '#007AFF' }}
+                    thumbColor={isInsideView ? '#f4f3f4' : '#007AFF'}
+                    style={styles.compactSwitch}
+                  />
+                  <Text style={[styles.viewToggleLabel, { color: !isInsideView ? "#007AFF" : "#666" }]}>
+                    Outside
+                  </Text>
+                  <MaterialIcons 
+                    name="park" 
+                    size={24} 
+                    color={!isInsideView ? "#007AFF" : "#666"} 
+                  />
+                </View>
+              </View>
             </View>
           </Fragment>
         </View>
@@ -868,47 +1147,18 @@ export default function App() {
           </View>
         ) : null}
       </View>
-      
-      {/* View Toggle at Bottom */}
-      <View style={styles.viewToggleContainer}>
-        <View style={styles.viewToggleContent}>
-          <MaterialIcons 
-            name="home" 
-            size={28} 
-            color={isInsideView ? "#007AFF" : "#666"} 
-          />
-          <Text style={[styles.viewToggleLabel, { color: isInsideView ? "#007AFF" : "#666" }]}>
-            Inside
-          </Text>
-          <Switch
-            value={!isInsideView}
-            onValueChange={(value) => setIsInsideView(!value)}
-            trackColor={{ false: '#767577', true: '#007AFF' }}
-            thumbColor={isInsideView ? '#f4f3f4' : '#007AFF'}
-            style={styles.largeSwitch}
-          />
-          <Text style={[styles.viewToggleLabel, { color: !isInsideView ? "#007AFF" : "#666" }]}>
-            Outside
-          </Text>
-          <MaterialIcons 
-            name="park" 
-            size={28} 
-            color={!isInsideView ? "#007AFF" : "#666"} 
-          />
-        </View>
-      </View>
     </View>
   );
 
   // Helper to reliably persist data to storage
   const persistToStorage = async (key: string, value: string, label: string): Promise<boolean> => {
     try {
-      console.log(`Saving ${label}...`);
+      debugLog(`Saving ${label}...`, 'info', 'storage');
       await storage.setItem(key, value);
-      console.log(`Successfully saved ${label}`);
+      debugLog(`Successfully saved ${label}`, 'success', 'storage');
       return true;
     } catch (error) {
-      console.error(`Error saving ${label}:`, error);
+      debugLog(`Error saving ${label}: ${error}`, 'error', 'storage');
       return false;
     }
   };
@@ -939,32 +1189,62 @@ export default function App() {
         await storage.multiRemove([STORAGE_KEYS.USERNAME, STORAGE_KEYS.PASSWORD, STORAGE_KEYS.REMEMBER_ME]);
         console.log('Cleared all storage');
       };
-      console.log('Debug functions available: testStorage(), debugStorage(), clearAllStorage()');
+      debugLog('Debug functions available: testStorage(), debugStorage(), clearAllStorage()', 'info');
     }
   }, []);
 
   return (
-    <Fragment>
+    <Fragment key={forceRenderKey}>
       <View style={{ flex: 1 }}>
-        {isInitializing ? (
-          // Show a loading state while checking for saved credentials
-          <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-            <Text style={styles.title}>Gate Control</Text>
-            <Text style={styles.version}>v{appJson.expo.version}</Text>
-            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
-            <Text style={[styles.status, { marginTop: 10 }]}>Loading...</Text>
-          </View>
-        ) : isAutoReconnecting ? (
-          // Show a reconnecting state when auto-reconnecting
-          <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-            <Text style={styles.title}>Gate Control</Text>
-            <Text style={styles.version}>v{appJson.expo.version}</Text>
-            <View style={[styles.connectionDot, { backgroundColor: '#FFC107', marginTop: 20 }]} />
-            <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
-            <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Reconnecting...</Text>
-            <Text style={[styles.version, { marginTop: 10, fontStyle: 'italic' }]}>Restoring your session</Text>
-          </View>
-        ) : !isConnected ? renderLoginScreen() : renderMainScreen()}
+        {(() => {
+          const timestamp = new Date().toISOString();
+          debugLog(`🖥️ [${timestamp}] Render decision (key=${forceRenderKey}): isInitializing=${isInitializing}, isAutoReconnecting=${isAutoReconnecting}, isConnected=${isConnected}, hasCredentials=${!!(username && password)}, rememberMe=${rememberMe}`, 'info');
+          
+          // Show auto-reconnecting screen if we're auto-reconnecting (even during initialization)
+          if (isAutoReconnecting) {
+            debugLog(`🖥️ [${timestamp}] Rendering: Auto-reconnecting screen`, 'info');
+            return (
+              <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <Text style={styles.title}>Gate Control</Text>
+                <Text style={styles.version}>v{appJson.expo.version}</Text>
+                <View style={[styles.connectionDot, { backgroundColor: '#FFC107', marginTop: 20 }]} />
+                <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+                <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Reconnecting...</Text>
+                <Text style={[styles.version, { marginTop: 10, fontStyle: 'italic' }]}>Restoring your session</Text>
+              </View>
+            );
+          } else if (isInitializing) {
+            debugLog(`🖥️ [${timestamp}] Rendering: Initializing screen`, 'info');
+            return (
+              <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <Text style={styles.title}>Gate Control</Text>
+                <Text style={styles.version}>v{appJson.expo.version}</Text>
+                <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+                <Text style={[styles.status, { marginTop: 10 }]}>Loading...</Text>
+              </View>
+            );
+          } else if (!isConnected) {
+            // Check if we have saved credentials - show reconnecting screen instead of login
+            if (username && password && rememberMe && !isAutoReconnecting) {
+              debugLog(`🖥️ [${timestamp}] Have credentials but not connected - showing reconnecting screen instead of login`, 'info');
+              return (
+                <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={styles.title}>Gate Control</Text>
+                  <Text style={styles.version}>v{appJson.expo.version}</Text>
+                  <View style={[styles.connectionDot, { backgroundColor: '#FFC107', marginTop: 20 }]} />
+                  <ActivityIndicator size="large" color="#007AFF" style={{ marginTop: 20 }} />
+                  <Text style={[styles.status, { marginTop: 10, textAlign: 'center' }]}>Reconnecting...</Text>
+                  <Text style={[styles.version, { marginTop: 10, fontStyle: 'italic' }]}>Restoring your session</Text>
+                </View>
+              );
+            }
+            debugLog(`🖥️ [${timestamp}] Rendering: Login screen`, 'info');
+            return renderLoginScreen();
+          } else {
+            debugLog(`🖥️ [${timestamp}] Rendering: Main screen`, 'info');
+            return renderMainScreen();
+          }
+        })()}
       </View>
       
       {/* Notification overlay completely separate from main UI */}
@@ -975,6 +1255,77 @@ export default function App() {
         >
           <Text style={styles.notificationText}>{notification}</Text>
         </Animated.View>
+      ) : null}
+
+      {/* Debug panel for development - shows logs and app state */}
+      {DEBUG_ENABLED && showDebugPanel ? (
+        <View style={styles.debugPanel}>
+          <TouchableOpacity 
+            style={[styles.debugCloseButton, { right: 50 }]}
+            onPress={async () => {
+              try {
+                // Prepare debug content for copying
+                const currentState = `=== GATE APP DEBUG INFO ===
+Current State:
+- Connected: ${isConnected ? '✅' : '❌'}
+- Auto-Reconnecting: ${isAutoReconnecting ? '🔄' : '❌'}
+- Initializing: ${isInitializing ? '⏳' : '❌'}
+- Has Client: ${client ? '✅' : '❌'}
+- Has Credentials: ${username && password ? '✅' : '❌'}
+- Remember Me: ${rememberMe ? '✅' : '❌'}
+- Page Hidden: ${Platform.OS === 'web' ? (document.hidden ? '🙈' : '👁️') : 'N/A'}
+
+Recent Events:
+${debugLogs.map(log => `[${log.timestamp}] ${log.message}`).join('\n')}
+
+=== END DEBUG INFO ===`;
+
+                if (Platform.OS === 'web') {
+                  await navigator.clipboard.writeText(currentState);
+                  showNotification('Debug info copied to clipboard!');
+                } else {
+                  // For React Native, we'll use Expo Clipboard
+                  await Clipboard.setStringAsync(currentState);
+                  showNotification('Debug info copied to clipboard!');
+                }
+              } catch (error) {
+                debugLog(`Failed to copy debug info: ${error}`, 'error');
+                showNotification('Failed to copy debug info');
+              }
+            }}
+          >
+            <MaterialIcons name="content-copy" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.debugCloseButton}
+            onPress={() => setShowDebugPanel(false)}
+          >
+            <MaterialIcons name="close" size={24} color="#fff" />
+          </TouchableOpacity>
+          <Text style={styles.debugTitle}>Debug Panel</Text>
+          
+          {/* Current App State */}
+          <View style={[styles.debugContent, { maxHeight: '25%', marginBottom: 10 }]}>
+            <Text style={[styles.debugLog, { color: '#fff', fontSize: 16, fontWeight: 'bold' }]}>Current State:</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Connected: {isConnected ? '✅' : '❌'}</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Auto-Reconnecting: {isAutoReconnecting ? '🔄' : '❌'}</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Initializing: {isInitializing ? '⏳' : '❌'}</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Has Client: {client ? '✅' : '❌'}</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Has Credentials: {username && password ? '✅' : '❌'}</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Remember Me: {rememberMe ? '✅' : '❌'}</Text>
+            <Text style={[styles.debugLog, { color: '#fff' }]}>Page Hidden: {Platform.OS === 'web' ? (document.hidden ? '🙈' : '👁️') : 'N/A'}</Text>
+          </View>
+          
+          {/* Debug Logs */}
+          <Text style={[styles.debugTitle, { fontSize: 16 }]}>Recent Events:</Text>
+          <View style={[styles.debugContent, { maxHeight: '60%' }]}>
+            {debugLogs.map((log, index) => (
+              <Text key={index} style={[styles.debugLog, { color: getLogColor(log.type) }]}>
+                [{log.timestamp}] {log.message}
+              </Text>
+            ))}
+          </View>
+        </View>
       ) : null}
     </Fragment>
   );
@@ -1093,7 +1444,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 600,
     paddingHorizontal: 20,
-    gap: 20,
+    gap: 15, // Reduce gap between sections to bring them closer
     flexShrink: 0,
   },
   stableContainer: {
@@ -1203,6 +1554,28 @@ const styles = StyleSheet.create({
     marginTop: 20,
     flexShrink: 0,
   },
+  directionControlGroup: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    padding: 20,
+    marginHorizontal: -20, // Extend frame to container edges
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    marginTop: 5, // Reduce gap from top buttons
+  },
+  groupedViewToggle: {
+    marginTop: 15,
+    alignItems: 'center',
+  },
+  viewToggleSeparator: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#d0d0d0',
+    marginBottom: 15,
+  },
+  compactSwitch: {
+    transform: [{ scale: 1.2 }], // Slightly smaller than the large switch
+  },
   viewToggleContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1221,5 +1594,42 @@ const styles = StyleSheet.create({
   },
   buttonIndicator: {
     marginTop: 4,
+  },
+  debugPanel: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    padding: 20,
+    zIndex: 10000,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  debugCloseButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    padding: 10,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  debugTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 10,
+  },
+  debugContent: {
+    width: '100%',
+    maxHeight: '70%',
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  debugLog: {
+    fontSize: 14,
+    marginBottom: 8,
   },
 });
